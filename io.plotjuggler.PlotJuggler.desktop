@@ -6,4 +6,5 @@ Icon=plotjuggler
 Comment=Visualize timeseries like a pro
 Terminal=false
 Categories=Development;
+MimeType=application/x-ulog;
 Name[en_US]=PlotJuggler

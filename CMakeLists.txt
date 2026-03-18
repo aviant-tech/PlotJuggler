@@ -309,6 +309,9 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/io.plotjuggler.PlotJuggler.desktop
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/plotjuggler.svg
         DESTINATION ${DESKTOP_ICON_DIR})
 
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/io.plotjuggler.PlotJuggler.xml
+        DESTINATION "${CMAKE_INSTALL_PREFIX}/share/mime/packages")
+
 # ######################## Main App, Libraries and Plugins
 # ##############################################################################
 # check the architecture (x86)
