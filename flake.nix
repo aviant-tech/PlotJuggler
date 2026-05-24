@@ -29,49 +29,33 @@
 
           postPatch = ''
             substituteInPlace cmake/find_or_download_data_tamer.cmake \
-              --replace "URL" "SOURCE_DIR" \
-              --replace "https://github.com/PickNikRobotics/data_tamer/archive/refs/tags/1.0.3.zip" "${data-tamer-src}"
+              --replace-fail "URL" "SOURCE_DIR" \
+              --replace-fail "https://github.com/PickNikRobotics/data_tamer/archive/refs/tags/1.0.3.zip" "${data-tamer-src}"
 
-            rm cmake/find_or_download_fmt.cmake
-            rm cmake/find_or_download_fastcdr.cmake
-            rm cmake/find_or_download_zstd.cmake
-
-            substituteInPlace CMakeLists.txt \
-              --replace "include(cmake/find_or_download_fmt.cmake)" "find_package(fmt REQUIRED)" \
-              --replace "find_or_download_fmt()" ""
+            rm  cmake/find_or_download_fmt.cmake
+            rm  cmake/find_or_download_zstd.cmake
+            rm  cmake/find_or_download_lz4.cmake
 
             substituteInPlace CMakeLists.txt \
-              --replace "include(cmake/find_or_download_fastcdr.cmake)" "find_package(fastcdr REQUIRED)" \
-              --replace "find_or_download_fastcdr()" ""
-            find . -name "CMakeLists.txt" -exec sed -i 's/fastcdr::fastcdr/fastcdr/g' {} +
+              --replace-fail "include(cmake/find_or_download_fmt.cmake)" "find_package(fmt REQUIRED)" \
+              --replace-fail "find_or_download_fmt()" ""
 
-            cat > plotjuggler_plugins/DataLoadMCAP/CMakeLists.txt << 'EOF'
-            cmake_minimum_required(VERSION 3.5)
+            substituteInPlace CMakeLists.txt \
+              --replace-fail 'include(''${PROJECT_SOURCE_DIR}/cmake/find_or_download_lz4.cmake)' "find_package(lz4 REQUIRED)" \
+              --replace-fail "find_or_download_lz4()" ""
 
-            if(mcap_vendor_FOUND)
-              set(CMAKE_AUTOUIC ON)
-              set(CMAKE_AUTORCC ON)
-              set(CMAKE_AUTOMOC ON)
+            substituteInPlace CMakeLists.txt \
+              --replace-fail 'include(''${PROJECT_SOURCE_DIR}/cmake/find_or_download_zstd.cmake)' "find_package(zstd REQUIRED)" \
+              --replace-fail "find_or_download_zstd()" ""
 
-              project(DataLoadMCAP)
+            # nixpkgs provides shared libs, not static
+            find . -name "CMakeLists.txt" -exec sed -i 's/LZ4::lz4_static/LZ4::lz4_shared/g' {} +
+            find . -name "CMakeLists.txt" -exec sed -i 's/zstd::libzstd_static/zstd::libzstd_shared/g' {} +
 
-              add_library(mcap INTERFACE)
-              find_package(zstd REQUIRED)
-              find_package(lz4 REQUIRED)
-
-              add_library(dataload_mcap MODULE dataload_mcap.cpp)
-
-            target_link_libraries(
-              dataload_mcap PUBLIC Qt5::Widgets Qt5::Xml Qt5::Concurrent plotjuggler_base mcap
-                                  zstd lz4)
-
-            if(WIN32 AND MSVC)
-              target_link_options(dataload_mcap PRIVATE /ignore:4217)
-            endif()
-
-            install(TARGETS dataload_mcap DESTINATION ''${PJ_PLUGIN_INSTALL_DIRECTORY})
-            endif()
-            EOF
+            # wasmer fails to build in nixpkgs; disable it (it's optional)
+            substituteInPlace CMakeLists.txt \
+              --replace-fail "include(cmake/download_wasmer.cmake)" "" \
+              --replace-fail "download_wasmer()" ""
           '';
 
           cmakeFlags = [
@@ -92,7 +76,6 @@
             pkgs.lua
             pkgs.nlohmann_json
             pkgs.fmt
-            pkgs.fastcdr
             pkgs.lz4
             pkgs.zstd
             pkgs.mosquitto
@@ -103,7 +86,6 @@
             pkgs.xorg.xcbutilkeysyms
             pkgs.arrow-cpp
           ];
-          dontWrapQtApps = true;
 
           meta = with pkgs.lib; {
             description = "A tool to plot streaming data, fast and easy";
@@ -125,28 +107,9 @@
         apps.plotjuggler = self.apps.${system}.default;
 
         devShells.default = pkgs.mkShell {
+          inputsFrom = [ plotjuggler-pkg ];
           packages = [
-            pkgs.cmake
-            pkgs.qt5.full
-            pkgs.qt5.qtsvg
-            pkgs.qt5.qtimageformats
-            pkgs.qt5.qtdeclarative
-            pkgs.arrow-cpp
-            pkgs.zeromq
-            pkgs.sqlite
-            pkgs.lua
-            pkgs.nlohmann_json
-            pkgs.fmt
-            pkgs.fastcdr
-            pkgs.lz4
-            pkgs.zstd
-            pkgs.mosquitto
-            pkgs.protobuf
             pkgs.codespell
-            pkgs.xorg.libX11
-            pkgs.xorg.libxcb
-            pkgs.xorg.xcbutil
-            pkgs.xorg.xcbutilkeysyms
           ];
         };
       }
