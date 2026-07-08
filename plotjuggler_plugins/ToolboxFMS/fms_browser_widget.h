@@ -1,0 +1,92 @@
+#pragma once
+
+#include <QWidget>
+#include <map>
+#include <set>
+
+#include "PlotJuggler/plotdata.h"
+
+class QCheckBox;
+class QLabel;
+class QLineEdit;
+class QListWidget;
+class QNetworkAccessManager;
+class QNetworkReply;
+class QPushButton;
+class QTreeWidget;
+class QTreeWidgetItem;
+
+/**
+ * Browser for flights stored in the Aviant FMS.
+ *
+ * Lists flights through the regular flight API, then uses the
+ * api/analysis/flights/<id>/ulog-info and ulog-series endpoints to show the
+ * available ULog fields and download only the selected time series, instead
+ * of downloading the entire .ulg file.
+ */
+class FmsBrowserWidget : public QWidget
+{
+  Q_OBJECT
+
+public:
+  explicit FmsBrowserWidget(QWidget* parent = nullptr);
+
+  /// Called every time the toolbox is opened from the Tools menu.
+  void onShow();
+
+signals:
+  void importData(PJ::PlotDataMapRef& data, bool remove_old);
+  void closed();
+
+private slots:
+  void searchFlights();
+  void onFlightSelected();
+  void loadSelectedSeries();
+
+private:
+  QNetworkReply* apiGet(const QString& path_and_query);
+  void requestFlightList();
+  void populateFlightList(const QByteArray& flights_json);
+  void populateFieldTree(const QByteArray& info_json);
+  void applyFieldFilter(const QString& text);
+  void requestNextBatch();
+  void importSeriesPayload(const QByteArray& payload);
+  void importParameters(PJ::PlotDataMapRef& map);
+  void emitImport(PJ::PlotDataMapRef& map);
+  void setStatus(const QString& text, bool error = false);
+  void updateLoadButton();
+
+  QString topicLabel(const QString& dataset, int multi_id) const;
+  static QString fieldLabel(const QString& field);
+  QString seriesPrefix() const;
+
+  QLineEdit* _server_edit;
+  QLineEdit* _token_edit;
+  QLineEdit* _filter_edit;
+  QLineEdit* _field_filter_edit;
+  QListWidget* _flight_list;
+  QTreeWidget* _field_tree;
+  QCheckBox* _parameters_check;
+  QCheckBox* _prefix_check;
+  QPushButton* _search_button;
+  QPushButton* _load_button;
+  QLabel* _status_label;
+
+  QNetworkAccessManager* _network;
+
+  int _current_flight_id = -1;
+  int _last_imported_flight_id = -1;
+  std::map<int, QString> _aircraft_names;
+  // number of multi-id instances per dataset, used for the ".00" suffix
+  std::map<QString, int> _instance_count;
+  // specs already imported for the current flight, to avoid duplicated points
+  std::set<QString> _loaded_specs;
+  // parameters of the currently selected flight, imported as one-point series
+  std::map<QString, double> _parameters;
+  double _log_start_time_s = 0.0;
+  bool _parameters_imported = false;
+
+  QStringList _pending_specs;
+  bool _loading = false;
+  bool _env_flight_consumed = false;
+};
