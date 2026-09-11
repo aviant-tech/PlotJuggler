@@ -29,7 +29,10 @@
 namespace
 {
 constexpr int SPEC_ROLE = Qt::UserRole;  // '<dataset>_<multi_id>.<field>' spec
-constexpr int FIELDS_PER_REQUEST = 100;
+constexpr int FIELDS_PER_REQUEST = 50;
+// The FMS server answers 500 once the request URL passes ~3.6 kB, so cap the
+// query too: field specs vary in length, and 50 long ones would overshoot.
+constexpr int MAX_QUERY_CHARS = 1800;
 }  // namespace
 
 FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
@@ -429,10 +432,19 @@ void FmsBrowserWidget::loadSelectedSeries()
 void FmsBrowserWidget::requestNextBatch()
 {
   QUrlQuery query;
-  const int batch_size = std::min<int>(_pending_specs.size(), FIELDS_PER_REQUEST);
-  for (int i = 0; i < batch_size; i++)
+  const int max_batch = std::min<int>(_pending_specs.size(), FIELDS_PER_REQUEST);
+  int batch_size = 0;
+  while (batch_size < max_batch)
   {
-    query.addQueryItem("field", _pending_specs[i]);
+    QUrlQuery candidate = query;
+    candidate.addQueryItem("field", _pending_specs[batch_size]);
+    // always send at least one spec, however long it is
+    if (batch_size > 0 && candidate.toString(QUrl::FullyEncoded).size() > MAX_QUERY_CHARS)
+    {
+      break;
+    }
+    query = candidate;
+    batch_size++;
   }
   _pending_specs.erase(_pending_specs.begin(), _pending_specs.begin() + batch_size);
 
