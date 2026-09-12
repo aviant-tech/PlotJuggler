@@ -37,6 +37,10 @@ constexpr int FIELDS_PER_REQUEST = 50;
 // The FMS server answers 500 once the request URL passes ~3.6 kB, so cap the
 // query too: field specs vary in length, and 50 long ones would overshoot.
 constexpr int MAX_QUERY_CHARS = 1800;
+// One connection tops out around 4 MB/s against FMS while the link has plenty
+// of headroom, so keep several batches in flight: measured 4.2 MB/s on one
+// connection against 12.7 MB/s across four.
+constexpr int MAX_CONCURRENT_REQUESTS = 4;
 // Hardcoded on purpose. The deep link carries only a flight id, so a crafted
 // plotjuggler://fms/flight/... URL cannot point this plugin - and the API token
 // it sends - at somebody else's server.
@@ -535,9 +539,10 @@ void FmsBrowserWidget::startDownload(const QStringList& specs, int already_loade
   _import_ms = 0;
   _download_timer.start();
   qDebug() << "[ToolboxFMS] download start: flight" << _current_flight_id << "series"
-           << specs.size() << "already loaded" << already_loaded;
+           << specs.size() << "already loaded" << already_loaded << "concurrency"
+           << MAX_CONCURRENT_REQUESTS;
   updateLoadButton();
-  requestNextBatch();
+  pumpRequests();
 }
 
 void FmsBrowserWidget::loadSelectedSeries()
@@ -614,6 +619,26 @@ void FmsBrowserWidget::downloadAll(bool confirm)
   startDownload(specs, skipped);
 }
 
+void FmsBrowserWidget::pumpRequests()
+{
+  while (_in_flight < MAX_CONCURRENT_REQUESTS && !_pending_specs.isEmpty())
+  {
+    requestNextBatch();
+  }
+  if (_in_flight == 0)
+  {
+    _loading = false;
+    const qint64 total_ms = qMax<qint64>(_download_timer.elapsed(), 1);
+    qDebug().nospace() << "[ToolboxFMS] download done: " << _downloaded_series << " series, "
+                       << _downloaded_samples << " samples, " << _downloaded_bytes / 1024 / 1024
+                       << " MiB in " << total_ms << " ms ("
+                       << (_downloaded_bytes / 1024 * 1000 / total_ms)
+                       << " KiB/s) - summed across connections: waiting " << _wait_ms
+                       << " ms, parsing " << _parse_ms << " ms, importing " << _import_ms << " ms";
+    updateLoadButton();
+  }
+}
+
 void FmsBrowserWidget::requestNextBatch()
 {
   QUrlQuery query;
@@ -637,44 +662,34 @@ void FmsBrowserWidget::requestNextBatch()
                 .arg(batch_size)
                 .arg(_pending_specs.size()));
 
-  _request_timer.start();
+  // Relative to the download timer, so each in-flight batch can be timed
+  // without a timer per request.
+  const qint64 request_started_ms = _download_timer.elapsed();
+  _in_flight++;
   QNetworkReply* reply = apiGet(QString("/api/analysis/flights/%1/ulog-series/?%2")
                                     .arg(_current_flight_id)
                                     .arg(query.toString(QUrl::FullyEncoded)));
-  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+  connect(reply, &QNetworkReply::finished, this, [this, reply, request_started_ms]() {
     reply->deleteLater();
+    const qint64 waited_ms = _download_timer.elapsed() - request_started_ms;
+    _in_flight--;
     if (reply->error() != QNetworkReply::NoError)
     {
       setStatus("Series download error: " + reply->errorString() + " " +
                     QString::fromUtf8(reply->readAll().left(200)),
                 true);
+      // Stop sending more, but let the batches already in flight land: their
+      // data is fine, and they have been paid for already.
       _pending_specs.clear();
-      _loading = false;
-      updateLoadButton();
+      pumpRequests();
       return;
     }
-    const qint64 waited_ms = _request_timer.elapsed();
     _wait_ms += waited_ms;
     const QByteArray payload = reply->readAll();
     qDebug() << "[ToolboxFMS] batch:" << payload.size() / 1024 << "KiB in" << waited_ms << "ms ("
              << (waited_ms > 0 ? payload.size() / 1024 * 1000 / waited_ms : 0) << "KiB/s )";
     importSeriesPayload(payload);
-    if (!_pending_specs.isEmpty())
-    {
-      requestNextBatch();
-    }
-    else
-    {
-      _loading = false;
-      const qint64 total_ms = qMax<qint64>(_download_timer.elapsed(), 1);
-      qDebug().nospace()
-          << "[ToolboxFMS] download done: " << _downloaded_series << " series, "
-          << _downloaded_samples << " samples, " << _downloaded_bytes / 1024 / 1024 << " MiB in "
-          << total_ms << " ms (" << (_downloaded_bytes / 1024 * 1000 / total_ms)
-          << " KiB/s) - waiting on server " << _wait_ms << " ms, parsing " << _parse_ms
-          << " ms, importing " << _import_ms << " ms";
-      updateLoadButton();
-    }
+    pumpRequests();
   });
 }
 

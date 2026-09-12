@@ -55,6 +55,7 @@ private:
   void populateFlightList(const QByteArray& flights_json);
   void populateFieldTree(const QByteArray& info_json);
   void applyFieldFilter(const QString& text);
+  void pumpRequests();
   void requestNextBatch();
   void startDownload(const QStringList& specs, int already_loaded);
   QStringList allSpecs() const;
@@ -104,8 +105,8 @@ private:
   bool _parameters_imported = false;
 
   QStringList _pending_specs;
+  int _in_flight = 0;
   // profiling: see qDebug() output tagged [ToolboxFMS]
-  QElapsedTimer _request_timer;
   QElapsedTimer _download_timer;
   qint64 _downloaded_bytes = 0;
   int _downloaded_series = 0;
