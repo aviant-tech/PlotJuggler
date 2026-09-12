@@ -67,7 +67,6 @@ private:
   static QString fieldLabel(const QString& field);
   QString seriesPrefix() const;
 
-  QLineEdit* _server_edit;
   QLineEdit* _token_edit;
   QLineEdit* _filter_edit;  // extra raw "key=value&..." filters
   QComboBox* _aircraft_combo;

@@ -36,6 +36,10 @@ constexpr int FIELDS_PER_REQUEST = 50;
 // The FMS server answers 500 once the request URL passes ~3.6 kB, so cap the
 // query too: field specs vary in length, and 50 long ones would overshoot.
 constexpr int MAX_QUERY_CHARS = 1800;
+// Hardcoded on purpose. The deep link carries only a flight id, so a crafted
+// plotjuggler://fms/flight/... URL cannot point this plugin - and the API token
+// it sends - at somebody else's server.
+constexpr const char* FMS_SERVER = "https://fms.aviant.no";
 }  // namespace
 
 FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
@@ -43,18 +47,12 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
   _network = new QNetworkAccessManager(this);
 
   QSettings settings;
-  QString default_server = qEnvironmentVariable("FMS_SERVER");
-  if (default_server.isEmpty())
-  {
-    default_server = settings.value("ToolboxFMS/server", "https://fms.aviant.no").toString();
-  }
   QString default_token = qEnvironmentVariable("FMS_API_TOKEN");
   if (default_token.isEmpty())
   {
     default_token = settings.value("ToolboxFMS/token").toString();
   }
 
-  _server_edit = new QLineEdit(default_server, this);
   _token_edit = new QLineEdit(default_token, this);
   _token_edit->setEchoMode(QLineEdit::Password);
   _token_edit->setPlaceholderText("FMS API token (or set FMS_API_TOKEN)");
@@ -112,10 +110,6 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
   _status_label = new QLabel(this);
   _status_label->setWordWrap(true);
 
-  auto* server_row = new QHBoxLayout();
-  server_row->addWidget(new QLabel("Server:", this));
-  server_row->addWidget(_server_edit, 1);
-
   auto* token_row = new QHBoxLayout();
   token_row->addWidget(new QLabel("Token:", this));
   token_row->addWidget(_token_edit, 1);
@@ -164,7 +158,6 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
   buttons_row->addWidget(close_button);
 
   auto* main_layout = new QVBoxLayout(this);
-  main_layout->addLayout(server_row);
   main_layout->addLayout(token_row);
   main_layout->addLayout(filter_form);
   main_layout->addLayout(filter_row);
@@ -223,12 +216,7 @@ void FmsBrowserWidget::onShow()
 
 QNetworkReply* FmsBrowserWidget::apiGet(const QString& path_and_query)
 {
-  QString server = _server_edit->text().trimmed();
-  while (server.endsWith('/'))
-  {
-    server.chop(1);
-  }
-  QNetworkRequest request(QUrl(server + path_and_query));
+  QNetworkRequest request(QUrl(QString(FMS_SERVER) + path_and_query));
   request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                        QNetworkRequest::NoLessSafeRedirectPolicy);
   const QString token = _token_edit->text().trimmed();
@@ -242,7 +230,6 @@ QNetworkReply* FmsBrowserWidget::apiGet(const QString& path_and_query)
 void FmsBrowserWidget::searchFlights()
 {
   QSettings settings;
-  settings.setValue("ToolboxFMS/server", _server_edit->text().trimmed());
   settings.setValue("ToolboxFMS/token", _token_edit->text().trimmed());
 
   setStatus("Fetching flights...");
