@@ -1,0 +1,32 @@
+#!/bin/sh
+# URL handler for FMS deep links: plotjuggler://flight/<id>[?server=<host>]
+#
+# Registered through io.plotjuggler.PlotJugglerFMS.desktop, so clicking
+# "Open in PlotJuggler" on an FMS flight page lands here with the URL as $1.
+# The FMS API token is not passed in the link - it would end up in browser
+# history and server logs - so the browser panel takes it from FMS_API_TOKEN
+# or, after the first time it is typed in, from QSettings.
+set -eu
+
+url=${1-}
+
+# The id comes from a URL anyone can craft, so accept digits and nothing else.
+id=$(printf '%s' "$url" | sed -n 's#^plotjuggler://flight/\([0-9][0-9]*\)\([?#].*\)\{0,1\}$#\1#p')
+if [ -z "$id" ]; then
+  echo "plotjuggler-fms-open: not a flight link: $url" >&2
+  exit 1
+fi
+FMS_FLIGHT_ID=$id
+export FMS_FLIGHT_ID
+
+# Optional host, so a link from staging does not open the same id on prod.
+# A bare hostname keeps this free of percent-decoding.
+server=$(printf '%s' "$url" | sed -n 's#.*[?&]server=\([A-Za-z0-9.-]\{1,\}\)\(&.*\)\{0,1\}$#\1#p')
+if [ -n "$server" ]; then
+  FMS_SERVER="https://$server"
+  export FMS_SERVER
+fi
+
+# drop the URL, pass any extra arguments through
+shift
+exec plotjuggler "$@"

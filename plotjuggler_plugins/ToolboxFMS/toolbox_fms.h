@@ -26,5 +26,8 @@ public slots:
   bool onShowWidget() override;
 
 private:
+  /// Opens the toolbox by triggering the menu action the host registered for it.
+  void showFromMenuAction() const;
+
   FmsBrowserWidget* _widget;
 };
