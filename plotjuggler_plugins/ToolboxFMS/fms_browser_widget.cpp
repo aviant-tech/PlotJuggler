@@ -248,10 +248,10 @@ QNetworkReply* FmsBrowserWidget::apiGet(const QString& path_and_query)
   QNetworkRequest request(QUrl(QString(FMS_SERVER) + path_and_query));
   request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                        QNetworkRequest::NoLessSafeRedirectPolicy);
-  // The float64 series payload gzips to ~39% of its size, and one connection to
-  // FMS is capped around 4 MB/s, so this is a straight 2.5x on the download.
-  // Qt decompresses transparently; asking explicitly only documents the intent.
-  request.setRawHeader("Accept-Encoding", "gzip");
+  // Deliberately NOT setting Accept-Encoding. Qt adds "gzip, deflate" itself
+  // and only then sets autoDecompress on the request, so asking for gzip by
+  // hand gets the compressed bytes handed back undecoded - which reads as a
+  // corrupt payload, not as an error.
   const QString token = _token_edit->text().trimmed();
   if (!token.isEmpty())
   {
@@ -733,15 +733,20 @@ void FmsBrowserWidget::requestNextBatch()
     }
     _wait_ms += waited_ms;
     const QByteArray payload = reply->readAll();
-    // payload is already decompressed, so measure the wire against Content-Length
-    // to keep the logged rate comparable to the uncompressed case.
-    const qint64 wire_bytes = reply->rawHeader("Content-Length").toLongLong();
-    const qint64 sent = wire_bytes > 0 ? wire_bytes : payload.size();
+    // Qt hands back decompressed bytes, so take the wire size from the header
+    // the server sent. Qt may drop Content-Length once it decodes, and the two
+    // are equal when the response was not compressed at all, so only believe
+    // it when it is actually smaller - otherwise report the payload and say so.
+    const qint64 header_bytes = reply->rawHeader("Content-Length").toLongLong();
+    const bool wire_known = header_bytes > 0 && header_bytes < payload.size();
+    const qint64 sent = wire_known ? header_bytes : payload.size();
     _wire_bytes += sent;
     qDebug().nospace() << "[ToolboxFMS] batch: " << payload.size() / 1024 << " KiB ("
-                       << sent / 1024 << " KiB on the wire, "
-                       << (payload.size() > 0 ? sent * 100 / payload.size() : 100)
-                       << "%) in " << waited_ms << " ms ("
+                       << (wire_known ? QString("%1 KiB on the wire, %2%")
+                                            .arg(sent / 1024)
+                                            .arg(payload.size() > 0 ? sent * 100 / payload.size() : 100)
+                                      : QString("wire size unknown"))
+                       << ") in " << waited_ms << " ms ("
                        << (waited_ms > 0 ? sent / 1024 * 1000 / waited_ms : 0) << " KiB/s )";
     importSeriesPayload(payload);
     pumpRequests();
