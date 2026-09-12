@@ -24,4 +24,11 @@ export FMS_FLIGHT_ID
 
 # drop the URL, pass any extra arguments through
 shift
+
+# Prefer the plotjuggler installed next to this script: under Nix the profile's
+# bin is not necessarily on the PATH of whatever launched the URL handler.
+sibling=$(dirname "$0")/plotjuggler
+if [ -x "$sibling" ]; then
+  exec "$sibling" "$@"
+fi
 exec plotjuggler "$@"
