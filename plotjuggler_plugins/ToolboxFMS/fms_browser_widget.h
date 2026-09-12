@@ -109,6 +109,7 @@ private:
   // profiling: see qDebug() output tagged [ToolboxFMS]
   QElapsedTimer _download_timer;
   qint64 _downloaded_bytes = 0;
+  qint64 _wire_bytes = 0;  // after gzip, i.e. what the link actually carried
   int _downloaded_series = 0;
   int _downloaded_samples = 0;
   qint64 _wait_ms = 0;

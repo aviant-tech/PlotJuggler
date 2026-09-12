@@ -225,6 +225,10 @@ QNetworkReply* FmsBrowserWidget::apiGet(const QString& path_and_query)
   QNetworkRequest request(QUrl(QString(FMS_SERVER) + path_and_query));
   request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                        QNetworkRequest::NoLessSafeRedirectPolicy);
+  // The float64 series payload gzips to ~39% of its size, and one connection to
+  // FMS is capped around 4 MB/s, so this is a straight 2.5x on the download.
+  // Qt decompresses transparently; asking explicitly only documents the intent.
+  request.setRawHeader("Accept-Encoding", "gzip");
   const QString token = _token_edit->text().trimmed();
   if (!token.isEmpty())
   {
@@ -532,6 +536,7 @@ void FmsBrowserWidget::startDownload(const QStringList& specs, int already_loade
   _pending_specs = specs;
   _loading = true;
   _downloaded_bytes = 0;
+  _wire_bytes = 0;
   _downloaded_series = 0;
   _downloaded_samples = 0;
   _wait_ms = 0;
@@ -631,8 +636,8 @@ void FmsBrowserWidget::pumpRequests()
     const qint64 total_ms = qMax<qint64>(_download_timer.elapsed(), 1);
     qDebug().nospace() << "[ToolboxFMS] download done: " << _downloaded_series << " series, "
                        << _downloaded_samples << " samples, " << _downloaded_bytes / 1024 / 1024
-                       << " MiB in " << total_ms << " ms ("
-                       << (_downloaded_bytes / 1024 * 1000 / total_ms)
+                       << " MiB (" << _wire_bytes / 1024 / 1024 << " MiB on the wire) in "
+                       << total_ms << " ms (" << (_wire_bytes / 1024 * 1000 / total_ms)
                        << " KiB/s) - summed across connections: waiting " << _wait_ms
                        << " ms, parsing " << _parse_ms << " ms, importing " << _import_ms << " ms";
     updateLoadButton();
@@ -686,8 +691,16 @@ void FmsBrowserWidget::requestNextBatch()
     }
     _wait_ms += waited_ms;
     const QByteArray payload = reply->readAll();
-    qDebug() << "[ToolboxFMS] batch:" << payload.size() / 1024 << "KiB in" << waited_ms << "ms ("
-             << (waited_ms > 0 ? payload.size() / 1024 * 1000 / waited_ms : 0) << "KiB/s )";
+    // payload is already decompressed, so measure the wire against Content-Length
+    // to keep the logged rate comparable to the uncompressed case.
+    const qint64 wire_bytes = reply->rawHeader("Content-Length").toLongLong();
+    const qint64 sent = wire_bytes > 0 ? wire_bytes : payload.size();
+    _wire_bytes += sent;
+    qDebug().nospace() << "[ToolboxFMS] batch: " << payload.size() / 1024 << " KiB ("
+                       << sent / 1024 << " KiB on the wire, "
+                       << (payload.size() > 0 ? sent * 100 / payload.size() : 100)
+                       << "%) in " << waited_ms << " ms ("
+                       << (waited_ms > 0 ? sent / 1024 * 1000 / waited_ms : 0) << " KiB/s )";
     importSeriesPayload(payload);
     pumpRequests();
   });
