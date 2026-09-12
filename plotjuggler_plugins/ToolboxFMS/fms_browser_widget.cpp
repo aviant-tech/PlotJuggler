@@ -53,7 +53,17 @@ constexpr int MAX_QUERY_CHARS = 1800;
 // One connection tops out around 4 MB/s against FMS while the link has plenty
 // of headroom, so keep several batches in flight: measured 4.2 MB/s on one
 // connection against 12.7 MB/s across four.
-constexpr int MAX_CONCURRENT_REQUESTS = 4;
+//
+// Simulated on flight 9761 (2919 series, 691 MB) with the 32 MB cap and gzip,
+// the whole download takes 23.7 s at four connections and 12.6 s at eight.
+//
+// Qt's HTTP/1.1 connection cache is per QNetworkAccessManager and, as of Qt 5,
+// holds six channels per host, so the last two batches of eight may sit queued
+// inside Qt rather than on the wire. That shows up in the log as a batch whose
+// time is long but whose rate is low, since the timer starts when we hand the
+// request over. If it does, a second manager to round-robin across is the way
+// out, not a bigger number here.
+constexpr int MAX_CONCURRENT_REQUESTS = 8;
 // Hardcoded on purpose. The deep link carries only a flight id, so a crafted
 // plotjuggler://fms/flight/... URL cannot point this plugin - and the API token
 // it sends - at somebody else's server.
