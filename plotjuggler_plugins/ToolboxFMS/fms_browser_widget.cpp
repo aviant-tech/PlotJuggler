@@ -34,6 +34,19 @@ namespace
 {
 constexpr int SPEC_ROLE = Qt::UserRole;  // '<dataset>_<multi_id>.<field>' spec
 constexpr int FIELDS_PER_REQUEST = 50;
+// Field count alone is a poor batch size: within one flight log the per-series
+// sample count spans more than an order of magnitude, and since the tree groups
+// same-dataset fields together, a hot dataset fills whole batches with its
+// longest series. The download is only done when that straggler is, so cap the
+// estimated payload too, using the sample counts from ulog-info.
+//
+// 32 MB rather than something tighter because each request costs ~0.37 s of
+// server load and round trip: simulated on flight 9761 (2919 series, 691 MB),
+// a 32 MB cap takes 23.7 s against 26.7 s uncapped, while an 8 MB cap turns
+// 73 batches into 124 and ends up slower at 27.8 s. The tail matters more the
+// more connections there are - the same cap is worth 33% at 8 connections.
+constexpr qint64 BYTES_PER_SAMPLE = 16;  // float64 timestamp + float64 value
+constexpr qint64 MAX_BATCH_BYTES = 32 * 1024 * 1024;
 // The FMS server answers 500 once the request URL passes ~3.6 kB, so cap the
 // query too: field specs vary in length, and 50 long ones would overshoot.
 constexpr int MAX_QUERY_CHARS = 1800;
@@ -413,9 +426,14 @@ void FmsBrowserWidget::populateFieldTree(const QByteArray& info_json)
   const QJsonArray datasets = info["datasets"].toArray();
 
   _instance_count.clear();
+  _sample_counts.clear();
   for (const QJsonValue& value : datasets)
   {
-    _instance_count[value.toObject()["name"].toString()] += 1;
+    const QJsonObject dataset = value.toObject();
+    const QString name = dataset["name"].toString();
+    _instance_count[name] += 1;
+    _sample_counts[QString("%1_%2").arg(name).arg(dataset["multi_id"].toInt())] =
+        dataset["sample_count"].toVariant().toLongLong();
   }
 
   _parameters.clear();
@@ -644,21 +662,35 @@ void FmsBrowserWidget::pumpRequests()
   }
 }
 
+qint64 FmsBrowserWidget::estimatedBytes(const QString& spec) const
+{
+  // A spec is '<dataset>_<multi_id>.<field>', and dataset names have no dot,
+  // so the key is everything before the first one.
+  // 0 when the server is older than the sample_count field, which just falls
+  // back to batching by field count.
+  const auto it = _sample_counts.find(spec.left(spec.indexOf('.')));
+  return it == _sample_counts.end() ? 0 : it->second * BYTES_PER_SAMPLE;
+}
+
 void FmsBrowserWidget::requestNextBatch()
 {
   QUrlQuery query;
   const int max_batch = std::min<int>(_pending_specs.size(), FIELDS_PER_REQUEST);
   int batch_size = 0;
+  qint64 batch_bytes = 0;
   while (batch_size < max_batch)
   {
+    const qint64 spec_bytes = estimatedBytes(_pending_specs[batch_size]);
     QUrlQuery candidate = query;
     candidate.addQueryItem("field", _pending_specs[batch_size]);
-    // always send at least one spec, however long it is
-    if (batch_size > 0 && candidate.toString(QUrl::FullyEncoded).size() > MAX_QUERY_CHARS)
+    // always send at least one spec, however long or large it is
+    if (batch_size > 0 && (candidate.toString(QUrl::FullyEncoded).size() > MAX_QUERY_CHARS ||
+                           batch_bytes + spec_bytes > MAX_BATCH_BYTES))
     {
       break;
     }
     query = candidate;
+    batch_bytes += spec_bytes;
     batch_size++;
   }
   _pending_specs.erase(_pending_specs.begin(), _pending_specs.begin() + batch_size);

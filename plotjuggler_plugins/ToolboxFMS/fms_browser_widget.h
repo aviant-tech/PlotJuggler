@@ -57,6 +57,7 @@ private:
   void applyFieldFilter(const QString& text);
   void pumpRequests();
   void requestNextBatch();
+  qint64 estimatedBytes(const QString& spec) const;
   void startDownload(const QStringList& specs, int already_loaded);
   QStringList allSpecs() const;
   void downloadAll(bool confirm);
@@ -97,6 +98,8 @@ private:
   std::map<int, QString> _aircraft_names;
   // number of multi-id instances per dataset, used for the ".00" suffix
   std::map<QString, int> _instance_count;
+  // '<dataset>_<multi_id>' -> samples, from ulog-info, for sizing batches
+  std::map<QString, qint64> _sample_counts;
   // specs already imported for the current flight, to avoid duplicated points
   std::set<QString> _loaded_specs;
   // parameters of the currently selected flight, imported as one-point series
