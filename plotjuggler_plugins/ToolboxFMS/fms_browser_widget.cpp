@@ -741,7 +741,7 @@ void FmsBrowserWidget::requestNextBatch()
     const bool wire_known = header_bytes > 0 && header_bytes < payload.size();
     const qint64 sent = wire_known ? header_bytes : payload.size();
     _wire_bytes += sent;
-    qDebug().nospace() << "[ToolboxFMS] batch: " << payload.size() / 1024 << " KiB ("
+    qDebug().nospace().noquote() << "[ToolboxFMS] batch: " << payload.size() / 1024 << " KiB ("
                        << (wire_known ? QString("%1 KiB on the wire, %2%")
                                             .arg(sent / 1024)
                                             .arg(payload.size() > 0 ? sent * 100 / payload.size() : 100)
