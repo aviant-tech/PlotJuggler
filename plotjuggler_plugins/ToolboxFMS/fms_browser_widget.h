@@ -7,6 +7,8 @@
 #include "PlotJuggler/plotdata.h"
 
 class QCheckBox;
+class QComboBox;
+class QDateEdit;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -42,14 +44,19 @@ private slots:
   void searchFlights();
   void onFlightSelected();
   void loadSelectedSeries();
+  void downloadAllSeries();
 
 private:
   QNetworkReply* apiGet(const QString& path_and_query);
   void requestFlightList();
+  QString buildFilterQuery() const;
+  void populateAircraftCombo();
   void populateFlightList(const QByteArray& flights_json);
   void populateFieldTree(const QByteArray& info_json);
   void applyFieldFilter(const QString& text);
   void requestNextBatch();
+  void startDownload(const QStringList& specs, int already_loaded);
+  QStringList allSpecs() const;
   void importSeriesPayload(const QByteArray& payload);
   void importParameters(PJ::PlotDataMapRef& map);
   void emitImport(PJ::PlotDataMapRef& map);
@@ -62,7 +69,15 @@ private:
 
   QLineEdit* _server_edit;
   QLineEdit* _token_edit;
-  QLineEdit* _filter_edit;
+  QLineEdit* _filter_edit;  // extra raw "key=value&..." filters
+  QComboBox* _aircraft_combo;
+  QDateEdit* _date_after_edit;
+  QDateEdit* _date_before_edit;
+  QCheckBox* _date_after_check;
+  QCheckBox* _date_before_check;
+  QCheckBox* _ground_tests_check;
+  QLineEdit* _oneliner_edit;
+  QLineEdit* _flight_id_edit;
   QLineEdit* _field_filter_edit;
   QListWidget* _flight_list;
   QTreeWidget* _field_tree;
@@ -70,6 +85,7 @@ private:
   QCheckBox* _prefix_check;
   QPushButton* _search_button;
   QPushButton* _load_button;
+  QPushButton* _download_all_button;
   QLabel* _status_label;
 
   QNetworkAccessManager* _network;

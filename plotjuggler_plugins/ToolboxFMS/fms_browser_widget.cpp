@@ -1,7 +1,10 @@
 #include "fms_browser_widget.h"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDate>
+#include <QDateEdit>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -56,9 +59,35 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
   _token_edit->setEchoMode(QLineEdit::Password);
   _token_edit->setPlaceholderText("FMS API token (or set FMS_API_TOKEN)");
 
+  _aircraft_combo = new QComboBox(this);
+  _aircraft_combo->addItem("Any aircraft", 0);
+
+  _date_after_check = new QCheckBox("From:", this);
+  _date_after_check->setChecked(true);
+  _date_after_edit = new QDateEdit(QDate::currentDate().addDays(-30), this);
+  _date_after_edit->setCalendarPopup(true);
+  _date_after_edit->setDisplayFormat("yyyy-MM-dd");
+
+  _date_before_check = new QCheckBox("To:", this);
+  _date_before_edit = new QDateEdit(QDate::currentDate(), this);
+  _date_before_edit->setCalendarPopup(true);
+  _date_before_edit->setDisplayFormat("yyyy-MM-dd");
+  _date_before_edit->setEnabled(false);
+
+  _oneliner_edit = new QLineEdit(this);
+  _oneliner_edit->setPlaceholderText("Oneliner contains...");
+
+  _flight_id_edit = new QLineEdit(this);
+  _flight_id_edit->setPlaceholderText("Flight ID");
+  _flight_id_edit->setToolTip("Look up a single flight by ID; ignores the other filters");
+
+  _ground_tests_check = new QCheckBox("Hide ground tests", this);
+
   _filter_edit = new QLineEdit(this);
-  _filter_edit->setPlaceholderText("e.g. date_after=2026-06-01&aircraft=3");
-  _filter_edit->setText("date_after=" + QDate::currentDate().addDays(-30).toString(Qt::ISODate));
+  _filter_edit->setPlaceholderText("Extra filters, e.g. px4_version=1.14&payload=1");
+  _filter_edit->setToolTip("Raw query filters, same syntax as check_remote_flights --filter.\n"
+                           "Appended to the form above.");
+
   _search_button = new QPushButton("Search", this);
 
   _flight_list = new QListWidget(this);
@@ -75,6 +104,9 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
 
   _load_button = new QPushButton("Load selected series", this);
   _load_button->setEnabled(false);
+  _download_all_button = new QPushButton("Download all", this);
+  _download_all_button->setEnabled(false);
+  _download_all_button->setToolTip("Download every series of this flight");
   auto* close_button = new QPushButton("Close", this);
 
   _status_label = new QLabel(this);
@@ -88,8 +120,26 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
   token_row->addWidget(new QLabel("Token:", this));
   token_row->addWidget(_token_edit, 1);
 
+  auto* dates_row = new QHBoxLayout();
+  dates_row->addWidget(_date_after_check);
+  dates_row->addWidget(_date_after_edit, 1);
+  dates_row->addWidget(_date_before_check);
+  dates_row->addWidget(_date_before_edit, 1);
+
+  auto* id_row = new QHBoxLayout();
+  id_row->addWidget(_flight_id_edit, 1);
+  id_row->addWidget(_ground_tests_check);
+
+  auto* filter_form = new QFormLayout();
+  filter_form->setContentsMargins(0, 0, 0, 0);
+  filter_form->addRow("Aircraft:", _aircraft_combo);
+  filter_form->addRow("Date:", dates_row);
+  filter_form->addRow("Text:", _oneliner_edit);
+  filter_form->addRow("Flight:", id_row);
+  filter_form->addRow("More:", _filter_edit);
+
   auto* filter_row = new QHBoxLayout();
-  filter_row->addWidget(_filter_edit, 1);
+  filter_row->addStretch(1);
   filter_row->addWidget(_search_button);
 
   auto* tree_container = new QWidget(this);
@@ -110,11 +160,13 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
 
   auto* buttons_row = new QHBoxLayout();
   buttons_row->addWidget(_load_button, 1);
+  buttons_row->addWidget(_download_all_button);
   buttons_row->addWidget(close_button);
 
   auto* main_layout = new QVBoxLayout(this);
   main_layout->addLayout(server_row);
   main_layout->addLayout(token_row);
+  main_layout->addLayout(filter_form);
   main_layout->addLayout(filter_row);
   main_layout->addWidget(splitter, 1);
   main_layout->addLayout(options_row);
@@ -123,9 +175,15 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
 
   connect(_search_button, &QPushButton::clicked, this, &FmsBrowserWidget::searchFlights);
   connect(_filter_edit, &QLineEdit::returnPressed, this, &FmsBrowserWidget::searchFlights);
+  connect(_oneliner_edit, &QLineEdit::returnPressed, this, &FmsBrowserWidget::searchFlights);
+  connect(_flight_id_edit, &QLineEdit::returnPressed, this, &FmsBrowserWidget::searchFlights);
+  connect(_date_after_check, &QCheckBox::toggled, _date_after_edit, &QWidget::setEnabled);
+  connect(_date_before_check, &QCheckBox::toggled, _date_before_edit, &QWidget::setEnabled);
   connect(_flight_list, &QListWidget::itemSelectionChanged, this,
           &FmsBrowserWidget::onFlightSelected);
   connect(_load_button, &QPushButton::clicked, this, &FmsBrowserWidget::loadSelectedSeries);
+  connect(_download_all_button, &QPushButton::clicked, this,
+          &FmsBrowserWidget::downloadAllSeries);
   connect(close_button, &QPushButton::clicked, this, [this]() { emit closed(); });
   connect(_field_filter_edit, &QLineEdit::textChanged, this,
           &FmsBrowserWidget::applyFieldFilter);
@@ -154,7 +212,7 @@ void FmsBrowserWidget::onShow()
   if (!env_flight.isEmpty() && !_env_flight_consumed)
   {
     _env_flight_consumed = true;
-    _filter_edit->setText("id=" + env_flight);
+    _flight_id_edit->setText(env_flight);
     searchFlights();
   }
   else if (_flight_list->count() == 0)
@@ -207,19 +265,72 @@ void FmsBrowserWidget::searchFlights()
       {
         _aircraft_names[it.key().toInt()] = it.value().toString();
       }
+      populateAircraftCombo();
     }
     requestFlightList();
   });
 }
 
+void FmsBrowserWidget::populateAircraftCombo()
+{
+  const int selected = _aircraft_combo->currentData().toInt();
+  _aircraft_combo->clear();
+  _aircraft_combo->addItem("Any aircraft", 0);
+  for (const auto& [id, name] : _aircraft_names)
+  {
+    _aircraft_combo->addItem(name, id);
+  }
+  const int index = _aircraft_combo->findData(selected);
+  _aircraft_combo->setCurrentIndex(index >= 0 ? index : 0);
+}
+
+QString FmsBrowserWidget::buildFilterQuery() const
+{
+  QStringList terms;
+  // An explicit flight ID is a lookup, not a filter: everything else would
+  // only narrow a single-flight result.
+  const QString flight_id = _flight_id_edit->text().trimmed();
+  if (!flight_id.isEmpty())
+  {
+    terms << "id=" + QString::fromUtf8(QUrl::toPercentEncoding(flight_id));
+  }
+  else
+  {
+    const int aircraft_id = _aircraft_combo->currentData().toInt();
+    if (aircraft_id > 0)
+    {
+      terms << QString("aircraft=%1").arg(aircraft_id);
+    }
+    if (_date_after_check->isChecked())
+    {
+      terms << "date_after=" + _date_after_edit->date().toString(Qt::ISODate);
+    }
+    if (_date_before_check->isChecked())
+    {
+      terms << "date_before=" + _date_before_edit->date().toString(Qt::ISODate);
+    }
+    const QString oneliner = _oneliner_edit->text().trimmed();
+    if (!oneliner.isEmpty())
+    {
+      terms << "oneliner=" + QString::fromUtf8(QUrl::toPercentEncoding(oneliner));
+    }
+    if (_ground_tests_check->isChecked())
+    {
+      terms << "hide_ground_tests=1";
+    }
+  }
+  const QString extra = _filter_edit->text().trimmed();
+  if (!extra.isEmpty())
+  {
+    terms << extra;
+  }
+  terms << "no_page=1";
+  return terms.join("&");
+}
+
 void FmsBrowserWidget::requestFlightList()
 {
-  QString filter = _filter_edit->text().trimmed();
-  if (!filter.isEmpty())
-  {
-    filter += "&";
-  }
-  QNetworkReply* reply = apiGet("/api/flight/?" + filter + "no_page=1");
+  QNetworkReply* reply = apiGet("/api/flight/?" + buildFilterQuery());
   connect(reply, &QNetworkReply::finished, this, [this, reply]() {
     reply->deleteLater();
     _search_button->setEnabled(true);
@@ -349,6 +460,7 @@ void FmsBrowserWidget::populateFieldTree(const QByteArray& info_json)
   }
   _field_tree->blockSignals(false);
   applyFieldFilter(_field_filter_edit->text());
+  updateLoadButton();
   setStatus(QString("Flight %1: %2 topics. Check fields, then load.")
                 .arg(_current_flight_id)
                 .arg(datasets.size()));
@@ -392,11 +504,39 @@ void FmsBrowserWidget::updateLoadButton()
   _load_button->setEnabled(checked > 0 && !_loading);
   _load_button->setText(checked > 0 ? QString("Load %1 selected series").arg(checked) :
                                       "Load selected series");
+  _download_all_button->setEnabled(_field_tree->topLevelItemCount() > 0 && !_loading);
+}
+
+QStringList FmsBrowserWidget::allSpecs() const
+{
+  QStringList specs;
+  for (int t = 0; t < _field_tree->topLevelItemCount(); t++)
+  {
+    QTreeWidgetItem* topic_item = _field_tree->topLevelItem(t);
+    for (int f = 0; f < topic_item->childCount(); f++)
+    {
+      specs.append(topic_item->child(f)->data(0, SPEC_ROLE).toString());
+    }
+  }
+  return specs;
+}
+
+void FmsBrowserWidget::startDownload(const QStringList& specs, int already_loaded)
+{
+  if (specs.isEmpty())
+  {
+    setStatus(already_loaded ? "All selected series are already loaded." : "Nothing selected.");
+    return;
+  }
+  _pending_specs = specs;
+  _loading = true;
+  updateLoadButton();
+  requestNextBatch();
 }
 
 void FmsBrowserWidget::loadSelectedSeries()
 {
-  _pending_specs.clear();
+  QStringList specs;
   int skipped = 0;
   for (int t = 0; t < _field_tree->topLevelItemCount(); t++)
   {
@@ -415,18 +555,48 @@ void FmsBrowserWidget::loadSelectedSeries()
       }
       else
       {
-        _pending_specs.append(spec);
+        specs.append(spec);
       }
     }
   }
-  if (_pending_specs.isEmpty())
+  startDownload(specs, skipped);
+}
+
+void FmsBrowserWidget::downloadAllSeries()
+{
+  QStringList specs;
+  int skipped = 0;
+  for (const QString& spec : allSpecs())
   {
-    setStatus(skipped ? "All selected series are already loaded." : "Nothing selected.");
+    if (_loaded_specs.count(spec))
+    {
+      skipped++;
+    }
+    else
+    {
+      specs.append(spec);
+    }
+  }
+  if (specs.isEmpty())
+  {
+    setStatus(skipped ? "All series of this flight are already loaded." : "Nothing to download.");
     return;
   }
-  _loading = true;
-  updateLoadButton();
-  requestNextBatch();
+  // A full flight is easily several GB of float64 samples, all buffered in
+  // memory, so make the user confirm rather than letting a stray click do it.
+  const auto answer = QMessageBox::question(
+      this, "FMS Flight Browser",
+      QString("Download all %1 series of flight %2?\n\n"
+              "High-rate topics make this large: expect hundreds of MB to several GB, "
+              "and PlotJuggler keeps it all in memory.")
+          .arg(specs.size())
+          .arg(_current_flight_id),
+      QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+  if (answer != QMessageBox::Yes)
+  {
+    return;
+  }
+  startDownload(specs, skipped);
 }
 
 void FmsBrowserWidget::requestNextBatch()
