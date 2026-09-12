@@ -205,6 +205,7 @@ void FmsBrowserWidget::onShow()
   if (!env_flight.isEmpty() && !_env_flight_consumed)
   {
     _env_flight_consumed = true;
+    _auto_download_all = true;
     _flight_id_edit->setText(env_flight);
     searchFlights();
   }
@@ -451,6 +452,14 @@ void FmsBrowserWidget::populateFieldTree(const QByteArray& info_json)
   setStatus(QString("Flight %1: %2 topics. Check fields, then load.")
                 .arg(_current_flight_id)
                 .arg(datasets.size()));
+
+  if (_auto_download_all)
+  {
+    // Opened from an FMS deep link: load the whole flight without waiting for
+    // a click. Only for the flight the link named, not for later selections.
+    _auto_download_all = false;
+    downloadAll(false);
+  }
 }
 
 void FmsBrowserWidget::applyFieldFilter(const QString& text)
@@ -551,6 +560,11 @@ void FmsBrowserWidget::loadSelectedSeries()
 
 void FmsBrowserWidget::downloadAllSeries()
 {
+  downloadAll(true);
+}
+
+void FmsBrowserWidget::downloadAll(bool confirm)
+{
   QStringList specs;
   int skipped = 0;
   for (const QString& spec : allSpecs())
@@ -571,17 +585,21 @@ void FmsBrowserWidget::downloadAllSeries()
   }
   // A full flight is easily several GB of float64 samples, all buffered in
   // memory, so make the user confirm rather than letting a stray click do it.
-  const auto answer = QMessageBox::question(
-      this, "FMS Flight Browser",
-      QString("Download all %1 series of flight %2?\n\n"
-              "High-rate topics make this large: expect hundreds of MB to several GB, "
-              "and PlotJuggler keeps it all in memory.")
-          .arg(specs.size())
-          .arg(_current_flight_id),
-      QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-  if (answer != QMessageBox::Yes)
+  // A deep link is not a stray click: it asked for this flight by id.
+  if (confirm)
   {
-    return;
+    const auto answer = QMessageBox::question(
+        this, "FMS Flight Browser",
+        QString("Download all %1 series of flight %2?\n\n"
+                "High-rate topics make this large: expect hundreds of MB to several GB, "
+                "and PlotJuggler keeps it all in memory.")
+            .arg(specs.size())
+            .arg(_current_flight_id),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes)
+    {
+      return;
+    }
   }
   startDownload(specs, skipped);
 }
@@ -697,7 +715,8 @@ void FmsBrowserWidget::importSeriesPayload(const QByteArray& payload)
 
   emitImport(map);
 
-  QString message = QString("Imported %1 series from flight %2").arg(imported).arg(_current_flight_id);
+  QString message =
+      QString("Imported %1 series from flight %2").arg(imported).arg(_current_flight_id);
   const QJsonArray missing = header["missing"].toArray();
   if (!missing.isEmpty())
   {

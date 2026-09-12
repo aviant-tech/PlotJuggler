@@ -57,6 +57,7 @@ private:
   void requestNextBatch();
   void startDownload(const QStringList& specs, int already_loaded);
   QStringList allSpecs() const;
+  void downloadAll(bool confirm);
   void importSeriesPayload(const QByteArray& payload);
   void importParameters(PJ::PlotDataMapRef& map);
   void emitImport(PJ::PlotDataMapRef& map);
@@ -104,4 +105,6 @@ private:
   QStringList _pending_specs;
   bool _loading = false;
   bool _env_flight_consumed = false;
+  // set when a deep link picked the flight, so its series load without a click
+  bool _auto_download_all = false;
 };
