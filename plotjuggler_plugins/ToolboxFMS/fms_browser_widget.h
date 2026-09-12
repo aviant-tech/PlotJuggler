@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QElapsedTimer>
 #include <QWidget>
 #include <map>
 #include <set>
@@ -103,6 +104,15 @@ private:
   bool _parameters_imported = false;
 
   QStringList _pending_specs;
+  // profiling: see qDebug() output tagged [ToolboxFMS]
+  QElapsedTimer _request_timer;
+  QElapsedTimer _download_timer;
+  qint64 _downloaded_bytes = 0;
+  int _downloaded_series = 0;
+  int _downloaded_samples = 0;
+  qint64 _wait_ms = 0;
+  qint64 _parse_ms = 0;
+  qint64 _import_ms = 0;
   bool _loading = false;
   bool _env_flight_consumed = false;
   // set when a deep link picked the flight, so its series load without a click

@@ -1,6 +1,7 @@
 #include "fms_browser_widget.h"
 
 #include <QCheckBox>
+#include <QDebug>
 #include <QComboBox>
 #include <QDate>
 #include <QDateEdit>
@@ -526,6 +527,15 @@ void FmsBrowserWidget::startDownload(const QStringList& specs, int already_loade
   }
   _pending_specs = specs;
   _loading = true;
+  _downloaded_bytes = 0;
+  _downloaded_series = 0;
+  _downloaded_samples = 0;
+  _wait_ms = 0;
+  _parse_ms = 0;
+  _import_ms = 0;
+  _download_timer.start();
+  qDebug() << "[ToolboxFMS] download start: flight" << _current_flight_id << "series"
+           << specs.size() << "already loaded" << already_loaded;
   updateLoadButton();
   requestNextBatch();
 }
@@ -627,6 +637,7 @@ void FmsBrowserWidget::requestNextBatch()
                 .arg(batch_size)
                 .arg(_pending_specs.size()));
 
+  _request_timer.start();
   QNetworkReply* reply = apiGet(QString("/api/analysis/flights/%1/ulog-series/?%2")
                                     .arg(_current_flight_id)
                                     .arg(query.toString(QUrl::FullyEncoded)));
@@ -642,7 +653,12 @@ void FmsBrowserWidget::requestNextBatch()
       updateLoadButton();
       return;
     }
-    importSeriesPayload(reply->readAll());
+    const qint64 waited_ms = _request_timer.elapsed();
+    _wait_ms += waited_ms;
+    const QByteArray payload = reply->readAll();
+    qDebug() << "[ToolboxFMS] batch:" << payload.size() / 1024 << "KiB in" << waited_ms << "ms ("
+             << (waited_ms > 0 ? payload.size() / 1024 * 1000 / waited_ms : 0) << "KiB/s )";
+    importSeriesPayload(payload);
     if (!_pending_specs.isEmpty())
     {
       requestNextBatch();
@@ -650,6 +666,13 @@ void FmsBrowserWidget::requestNextBatch()
     else
     {
       _loading = false;
+      const qint64 total_ms = qMax<qint64>(_download_timer.elapsed(), 1);
+      qDebug().nospace()
+          << "[ToolboxFMS] download done: " << _downloaded_series << " series, "
+          << _downloaded_samples << " samples, " << _downloaded_bytes / 1024 / 1024 << " MiB in "
+          << total_ms << " ms (" << (_downloaded_bytes / 1024 * 1000 / total_ms)
+          << " KiB/s) - waiting on server " << _wait_ms << " ms, parsing " << _parse_ms
+          << " ms, importing " << _import_ms << " ms";
       updateLoadButton();
     }
   });
@@ -672,6 +695,8 @@ void FmsBrowserWidget::importSeriesPayload(const QByteArray& payload)
   const QJsonObject header =
       QJsonDocument::fromJson(payload.mid(8, int(header_len))).object();
 
+  QElapsedTimer parse_timer;
+  parse_timer.start();
   PJ::PlotDataMapRef map;
   qint64 offset = 8 + header_len;
   int imported = 0;
@@ -704,6 +729,7 @@ void FmsBrowserWidget::importSeriesPayload(const QByteArray& payload)
     }
     offset += qint64(count) * 16;
     _loaded_specs.insert(series["spec"].toString());
+    _downloaded_samples += count;
     imported++;
   }
 
@@ -712,8 +738,16 @@ void FmsBrowserWidget::importSeriesPayload(const QByteArray& payload)
     importParameters(map);
     _parameters_imported = true;
   }
+  _parse_ms += parse_timer.elapsed();
+  _downloaded_bytes += payload.size();
+  _downloaded_series += imported;
 
+  QElapsedTimer import_timer;
+  import_timer.start();
   emitImport(map);
+  _import_ms += import_timer.elapsed();
+  qDebug() << "[ToolboxFMS]  " << imported << "series parsed in" << parse_timer.elapsed()
+           << "ms, imported in" << import_timer.elapsed() << "ms";
 
   QString message =
       QString("Imported %1 series from flight %2").arg(imported).arg(_current_flight_id);
