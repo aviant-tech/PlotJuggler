@@ -216,8 +216,7 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
   connect(_flight_list, &QListWidget::itemSelectionChanged, this,
           &FmsBrowserWidget::onFlightSelected);
   connect(_load_button, &QPushButton::clicked, this, &FmsBrowserWidget::loadSelectedSeries);
-  connect(_download_all_button, &QPushButton::clicked, this,
-          &FmsBrowserWidget::downloadAllSeries);
+  connect(_download_all_button, &QPushButton::clicked, this, &FmsBrowserWidget::downloadAll);
   connect(_cancel_button, &QPushButton::clicked, this, &FmsBrowserWidget::cancelDownload);
   connect(close_button, &QPushButton::clicked, this, [this]() { emit closed(); });
   connect(_field_filter_edit, &QLineEdit::textChanged, this,
@@ -519,7 +518,7 @@ void FmsBrowserWidget::populateFieldTree(const QByteArray& info_json)
   {
     // Opened from an FMS deep link: load the whole flight without waiting for
     // a click. Only for the flight the link named, not for later selections.
-    downloadAll(false);
+    downloadAll();
   }
 }
 
@@ -656,12 +655,7 @@ void FmsBrowserWidget::loadSelectedSeries()
   startDownload(specs, skipped);
 }
 
-void FmsBrowserWidget::downloadAllSeries()
-{
-  downloadAll(true);
-}
-
-void FmsBrowserWidget::downloadAll(bool confirm)
+void FmsBrowserWidget::downloadAll()
 {
   QStringList specs;
   int skipped = 0;
@@ -682,24 +676,11 @@ void FmsBrowserWidget::downloadAll(bool confirm)
     _link_in_progress = false;
     return;
   }
-  // A full flight is easily several GB of float64 samples, all buffered in
-  // memory, so make the user confirm rather than letting a stray click do it.
-  // A deep link is not a stray click: it asked for this flight by id.
-  if (confirm)
-  {
-    const auto answer = QMessageBox::question(
-        this, "FMS Flight Browser",
-        QString("Download all %1 series of flight %2?\n\n"
-                "High-rate topics make this large: expect hundreds of MB to several GB, "
-                "and PlotJuggler keeps it all in memory.")
-            .arg(specs.size())
-            .arg(_current_flight_id),
-        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-    if (answer != QMessageBox::Yes)
-    {
-      return;
-    }
-  }
+  // The whole flight is what was asked for, so there is nothing left to do in
+  // the panel: go back to the plots and let the progress dialog take over.
+  // The host hides this widget synchronously on closed(), which is what makes
+  // startDownload() put up the dialog.
+  emit closed();
   startDownload(specs, skipped);
 }
 

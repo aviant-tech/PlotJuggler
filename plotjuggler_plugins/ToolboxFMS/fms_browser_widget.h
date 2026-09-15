@@ -54,7 +54,7 @@ private slots:
   void searchFlights();
   void onFlightSelected();
   void loadSelectedSeries();
-  void downloadAllSeries();
+  void downloadAll();
   void cancelDownload();
 
 private:
@@ -71,7 +71,6 @@ private:
   qint64 progressWeight(const QString& spec) const;
   void startDownload(const QStringList& specs, int already_loaded);
   QStringList allSpecs() const;
-  void downloadAll(bool confirm);
   void importSeriesPayload(const QByteArray& payload);
   void importParameters(PJ::PlotDataMapRef& map);
   void emitImport(PJ::PlotDataMapRef& map);

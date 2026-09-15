@@ -8,6 +8,7 @@
 #include "toast_notification.h"
 
 #include <QLayout>
+#include <QRegion>
 
 ToastManager::ToastManager(QWidget* parent_widget)
   : QObject(parent_widget)
@@ -139,6 +140,14 @@ void ToastManager::repositionToasts()
   // We iterate from bottom (last toast) to top (first toast)
   int current_y = container_height - _margin_bottom;
 
+  // The container spans the full height of the window on the right, and it is
+  // not transparent to the mouse (the toasts need their clicks). Mask it down
+  // to the rows the toasts occupy, so the rest of the strip does not swallow
+  // clicks meant for whatever is underneath - buttons in the bottom-right
+  // corner of a toolbox panel, for instance. Each row runs to the right edge
+  // so a toast stays clickable while it slides in.
+  QRegion clickable;
+
   for (int i = _toasts.size() - 1; i >= 0; --i)
   {
     ToastNotification* toast = _toasts[i];
@@ -166,8 +175,10 @@ void ToastManager::repositionToasts()
     QPoint targetPos(x, current_y);
     toast->updateTargetPosition(targetPos);
     toast->show();
+    clickable += QRect(x, current_y, container_width - x, toast_height);
 
     // Add spacing for next toast above
     current_y -= _spacing;
   }
+  _container->setMask(clickable);
 }
