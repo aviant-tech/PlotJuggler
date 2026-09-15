@@ -37,9 +37,16 @@ public:
   /// Called every time the toolbox is opened from the Tools menu.
   void onShow();
 
+  /// Opened from an FMS deep link: select the flight and download all of it
+  /// without the panel being shown. Emits showRequested() only if something
+  /// needs the user - no token, no such flight, or an error.
+  void openFlightFromLink(const QString& flight_id);
+
 signals:
   void importData(PJ::PlotDataMapRef& data, bool remove_old);
   void closed();
+  /// The panel has something the user has to see (an error, a token prompt).
+  void showRequested();
 
 private slots:
   void searchFlights();
@@ -119,7 +126,7 @@ private:
   qint64 _parse_ms = 0;
   qint64 _import_ms = 0;
   bool _loading = false;
-  bool _env_flight_consumed = false;
-  // set when a deep link picked the flight, so its series load without a click
-  bool _auto_download_all = false;
+  // set while a deep link drives the widget with the panel hidden: the flight
+  // it named loads without a click, and problems surface via showRequested()
+  bool _link_in_progress = false;
 };

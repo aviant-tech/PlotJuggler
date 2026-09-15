@@ -229,18 +229,27 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
 
 void FmsBrowserWidget::onShow()
 {
-  const QString env_flight = qEnvironmentVariable("FMS_FLIGHT_ID");
-  if (!env_flight.isEmpty() && !_env_flight_consumed)
-  {
-    _env_flight_consumed = true;
-    _auto_download_all = true;
-    _flight_id_edit->setText(env_flight);
-    searchFlights();
-  }
-  else if (_flight_list->count() == 0)
+  if (_flight_list->count() == 0 && !_link_in_progress)
   {
     searchFlights();
   }
+}
+
+void FmsBrowserWidget::openFlightFromLink(const QString& flight_id)
+{
+  _link_in_progress = true;
+  _flight_id_edit->setText(flight_id);
+  if (_token_edit->text().trimmed().isEmpty())
+  {
+    // Nothing can be fetched without a token, and the panel is the only place
+    // to type one. Once typed, Search runs the flight-id filter as usual.
+    setStatus("Enter the FMS API token to open flight " + flight_id, true);
+    // setStatus() raised the panel and dropped the flag; keep it so the flight
+    // still downloads in full once the token is typed and Search is pressed.
+    _link_in_progress = true;
+    return;
+  }
+  searchFlights();
 }
 
 QNetworkReply* FmsBrowserWidget::apiGet(const QString& path_and_query)
@@ -388,7 +397,9 @@ void FmsBrowserWidget::populateFlightList(const QByteArray& flights_json)
     item->setData(Qt::UserRole, id);
     item->setToolTip(QString("Flight %1\n%2").arg(id).arg(flight["name"].toString()));
   }
-  setStatus(QString("%1 flight(s) found").arg(flights.size()));
+  // No flight for a deep link's id is a dead end the user has to see.
+  setStatus(QString("%1 flight(s) found").arg(flights.size()),
+            flights.isEmpty() && _link_in_progress);
 
   if (flights.size() == 1)
   {
@@ -490,11 +501,10 @@ void FmsBrowserWidget::populateFieldTree(const QByteArray& info_json)
                 .arg(_current_flight_id)
                 .arg(datasets.size()));
 
-  if (_auto_download_all)
+  if (_link_in_progress)
   {
     // Opened from an FMS deep link: load the whole flight without waiting for
     // a click. Only for the flight the link named, not for later selections.
-    _auto_download_all = false;
     downloadAll(false);
   }
 }
@@ -629,6 +639,7 @@ void FmsBrowserWidget::downloadAll(bool confirm)
   if (specs.isEmpty())
   {
     setStatus(skipped ? "All series of this flight are already loaded." : "Nothing to download.");
+    _link_in_progress = false;
     return;
   }
   // A full flight is easily several GB of float64 samples, all buffered in
@@ -661,6 +672,7 @@ void FmsBrowserWidget::pumpRequests()
   if (_in_flight == 0)
   {
     _loading = false;
+    _link_in_progress = false;
     const qint64 total_ms = qMax<qint64>(_download_timer.elapsed(), 1);
     qDebug().nospace() << "[ToolboxFMS] download done: " << _downloaded_series << " series, "
                        << _downloaded_samples << " samples, " << _downloaded_bytes / 1024 / 1024
@@ -900,4 +912,11 @@ void FmsBrowserWidget::setStatus(const QString& text, bool error)
 {
   _status_label->setStyleSheet(error ? "color: red" : "");
   _status_label->setText(text);
+  if (error && _link_in_progress)
+  {
+    // The user clicked a link and is looking at an empty plot view: a red
+    // label in a hidden panel would go unseen, so bring the panel up.
+    _link_in_progress = false;
+    emit showRequested();
+  }
 }

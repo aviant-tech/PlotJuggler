@@ -13,22 +13,30 @@ ToolboxFMS::ToolboxFMS()
 
   connect(_widget, &FmsBrowserWidget::importData, this, &ToolboxFMS::importData);
   connect(_widget, &FmsBrowserWidget::closed, this, &ToolboxFMS::closed);
+  connect(_widget, &FmsBrowserWidget::showRequested, this, &ToolboxFMS::showFromMenuAction);
 
-  if (qEnvironmentVariableIsSet("FMS_FLIGHT_ID"))
+  const QString link_flight = qEnvironmentVariable("FMS_FLIGHT_ID");
+  if (!link_flight.isEmpty())
   {
-    // Launched from an FMS deep link, so open the browser instead of leaving it
-    // in the Tools menu. The toolbox interface has no way for a plugin to ask to
-    // be shown, so trigger the menu action the host created for us: it is named
-    // after this plugin and is wired to both onShowWidget() and the widget
-    // stack. Queued because the action does not exist yet while we are being
-    // constructed. If the host ever stops working this way nothing happens, and
-    // opening the browser by hand still lands on the right flight.
-    QTimer::singleShot(0, this, [this]() { showFromMenuAction(); });
+    // Launched from an FMS deep link. The link named one flight, so there is
+    // nothing to choose in the browser panel: leave the plot view where it is
+    // and let the widget download the whole flight in the background. Series
+    // appear as batches land. The panel is only raised if the widget hits
+    // something the user has to deal with (see showRequested). Queued so the
+    // host has finished wiring importData before the first batch arrives.
+    QTimer::singleShot(0, _widget, [this, link_flight]() {
+      _widget->openFlightFromLink(link_flight);
+    });
   }
 }
 
 void ToolboxFMS::showFromMenuAction() const
 {
+  // The toolbox interface has no way for a plugin to ask to be shown, so
+  // trigger the menu action the host created for us: it is named after this
+  // plugin and is wired to both onShowWidget() and the widget stack. If the
+  // host ever stops working this way nothing happens, and the panel can still
+  // be opened by hand from the Tools menu.
   for (QWidget* top_level : QApplication::topLevelWidgets())
   {
     for (QAction* action : top_level->findChildren<QAction*>())
