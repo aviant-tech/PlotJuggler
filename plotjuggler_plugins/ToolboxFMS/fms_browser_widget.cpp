@@ -404,11 +404,12 @@ void FmsBrowserWidget::populateFlightList(const QByteArray& flights_json)
     auto aircraft_it = _aircraft_names.find(flight["aircraft"].toInt());
     const QString aircraft =
         aircraft_it != _aircraft_names.end() ? aircraft_it->second : QString("?");
-    auto* item = new QListWidgetItem(QString("%1  %2: %3").arg(start_time, aircraft,
-                                                               flight["oneliner"].toString()),
+    auto* item = new QListWidgetItem(QString("%1  %2  %3: %4").arg(flight["name"].toString(),
+                                                                   start_time, aircraft,
+                                                                   flight["oneliner"].toString()),
                                      _flight_list);
     item->setData(Qt::UserRole, id);
-    item->setToolTip(QString("Flight %1\n%2").arg(id).arg(flight["name"].toString()));
+    item->setToolTip(QString("Flight %1").arg(id));
   }
   // No flight for a deep link's id is a dead end the user has to see.
   setStatus(QString("%1 flight(s) found").arg(flights.size()),
