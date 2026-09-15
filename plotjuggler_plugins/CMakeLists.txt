@@ -17,6 +17,7 @@ add_subdirectory(VideoViewer)
 
 add_subdirectory(ToolboxQuaternion)
 add_subdirectory(ToolboxFFT)
+add_subdirectory(ToolboxFMS)
 add_subdirectory(ToolboxLuaEditor)
 
 add_subdirectory(ParserProtobuf)
