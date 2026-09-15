@@ -17,6 +17,8 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QProgressBar>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSettings>
@@ -64,6 +66,9 @@ constexpr int MAX_QUERY_CHARS = 1800;
 // request over. If it does, a second manager to round-robin across is the way
 // out, not a bigger number here.
 constexpr int MAX_CONCURRENT_REQUESTS = 8;
+// Resolution of the progress bar; the weights behind it are bytes, far too
+// many for a QProgressBar's int range on a long flight.
+constexpr int PROGRESS_STEPS = 1000;
 // Hardcoded on purpose. The deep link carries only a flight id, so a crafted
 // plotjuggler://fms/flight/... URL cannot point this plugin - and the API token
 // it sends - at somebody else's server.
@@ -131,11 +136,17 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
   _load_button = new QPushButton("Load selected series", this);
   _load_button->setEnabled(false);
   _download_all_button = new QPushButton("Download all", this);
+  _cancel_button = new QPushButton("Cancel", this);
+  _cancel_button->setEnabled(false);
   _download_all_button->setEnabled(false);
   _download_all_button->setToolTip("Download every series of this flight");
   auto* close_button = new QPushButton("Close", this);
 
   _status_label = new QLabel(this);
+  _progress_bar = new QProgressBar(this);
+  _progress_bar->setRange(0, PROGRESS_STEPS);
+  _progress_bar->setTextVisible(true);
+  _progress_bar->hide();
   _status_label->setWordWrap(true);
 
   auto* token_row = new QHBoxLayout();
@@ -183,6 +194,7 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
   auto* buttons_row = new QHBoxLayout();
   buttons_row->addWidget(_load_button, 1);
   buttons_row->addWidget(_download_all_button);
+  buttons_row->addWidget(_cancel_button);
   buttons_row->addWidget(close_button);
 
   auto* main_layout = new QVBoxLayout(this);
@@ -192,6 +204,7 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
   main_layout->addWidget(splitter, 1);
   main_layout->addLayout(options_row);
   main_layout->addLayout(buttons_row);
+  main_layout->addWidget(_progress_bar);
   main_layout->addWidget(_status_label);
 
   connect(_search_button, &QPushButton::clicked, this, &FmsBrowserWidget::searchFlights);
@@ -205,6 +218,7 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
   connect(_load_button, &QPushButton::clicked, this, &FmsBrowserWidget::loadSelectedSeries);
   connect(_download_all_button, &QPushButton::clicked, this,
           &FmsBrowserWidget::downloadAllSeries);
+  connect(_cancel_button, &QPushButton::clicked, this, &FmsBrowserWidget::cancelDownload);
   connect(close_button, &QPushButton::clicked, this, [this]() { emit closed(); });
   connect(_field_filter_edit, &QLineEdit::textChanged, this,
           &FmsBrowserWidget::applyFieldFilter);
@@ -548,6 +562,7 @@ void FmsBrowserWidget::updateLoadButton()
   _load_button->setText(checked > 0 ? QString("Load %1 selected series").arg(checked) :
                                       "Load selected series");
   _download_all_button->setEnabled(_field_tree->topLevelItemCount() > 0 && !_loading);
+  _cancel_button->setEnabled(_loading);
 }
 
 QStringList FmsBrowserWidget::allSpecs() const
@@ -573,6 +588,31 @@ void FmsBrowserWidget::startDownload(const QStringList& specs, int already_loade
   }
   _pending_specs = specs;
   _loading = true;
+  _progress_total = 0;
+  _progress_done = 0;
+  for (const QString& spec : specs)
+  {
+    _progress_total += progressWeight(spec);
+  }
+  _progress_bar->setValue(0);
+  _progress_bar->show();
+  if (!isVisible())
+  {
+    // Deep link: the panel is hidden and the user is looking at the plot view,
+    // so give the download a face of its own there. Non-modal, so the plots
+    // that have already landed stay usable while the rest arrives.
+    delete _progress_dialog;
+    _progress_dialog =
+        new QProgressDialog(QString("Downloading flight %1...").arg(_current_flight_id), "Cancel",
+                            0, PROGRESS_STEPS, window());
+    _progress_dialog->setWindowTitle("FMS Flight Browser");
+    _progress_dialog->setWindowModality(Qt::NonModal);
+    _progress_dialog->setMinimumDuration(0);
+    _progress_dialog->setAutoClose(false);
+    _progress_dialog->setAutoReset(false);
+    _progress_dialog->setValue(0);
+    connect(_progress_dialog, &QProgressDialog::canceled, this, &FmsBrowserWidget::cancelDownload);
+  }
   _downloaded_bytes = 0;
   _wire_bytes = 0;
   _downloaded_series = 0;
@@ -673,6 +713,7 @@ void FmsBrowserWidget::pumpRequests()
   {
     _loading = false;
     _link_in_progress = false;
+    finishProgress();
     const qint64 total_ms = qMax<qint64>(_download_timer.elapsed(), 1);
     qDebug().nospace() << "[ToolboxFMS] download done: " << _downloaded_series << " series, "
                        << _downloaded_samples << " samples, " << _downloaded_bytes / 1024 / 1024
@@ -694,12 +735,20 @@ qint64 FmsBrowserWidget::estimatedBytes(const QString& spec) const
   return it == _sample_counts.end() ? 0 : it->second * BYTES_PER_SAMPLE;
 }
 
+qint64 FmsBrowserWidget::progressWeight(const QString& spec) const
+{
+  // At least one unit per series, so an old server without sample counts
+  // still moves the bar - by series instead of by bytes.
+  return std::max<qint64>(estimatedBytes(spec), 1);
+}
+
 void FmsBrowserWidget::requestNextBatch()
 {
   QUrlQuery query;
   const int max_batch = std::min<int>(_pending_specs.size(), FIELDS_PER_REQUEST);
   int batch_size = 0;
   qint64 batch_bytes = 0;
+  qint64 batch_weight = 0;
   while (batch_size < max_batch)
   {
     const qint64 spec_bytes = estimatedBytes(_pending_specs[batch_size]);
@@ -713,6 +762,7 @@ void FmsBrowserWidget::requestNextBatch()
     }
     query = candidate;
     batch_bytes += spec_bytes;
+    batch_weight += progressWeight(_pending_specs[batch_size]);
     batch_size++;
   }
   _pending_specs.erase(_pending_specs.begin(), _pending_specs.begin() + batch_size);
@@ -728,10 +778,12 @@ void FmsBrowserWidget::requestNextBatch()
   QNetworkReply* reply = apiGet(QString("/api/analysis/flights/%1/ulog-series/?%2")
                                     .arg(_current_flight_id)
                                     .arg(query.toString(QUrl::FullyEncoded)));
-  connect(reply, &QNetworkReply::finished, this, [this, reply, request_started_ms]() {
+  connect(reply, &QNetworkReply::finished, this,
+          [this, reply, request_started_ms, batch_weight]() {
     reply->deleteLater();
     const qint64 waited_ms = _download_timer.elapsed() - request_started_ms;
     _in_flight--;
+    _progress_done += batch_weight;
     if (reply->error() != QNetworkReply::NoError)
     {
       setStatus("Series download error: " + reply->errorString() + " " +
@@ -740,6 +792,7 @@ void FmsBrowserWidget::requestNextBatch()
       // Stop sending more, but let the batches already in flight land: their
       // data is fine, and they have been paid for already.
       _pending_specs.clear();
+      updateProgress();
       pumpRequests();
       return;
     }
@@ -761,6 +814,7 @@ void FmsBrowserWidget::requestNextBatch()
                        << ") in " << waited_ms << " ms ("
                        << (waited_ms > 0 ? sent / 1024 * 1000 / waited_ms : 0) << " KiB/s )";
     importSeriesPayload(payload);
+    updateProgress();
     pumpRequests();
   });
 }
@@ -906,6 +960,54 @@ QString FmsBrowserWidget::fieldLabel(const QString& field)
 QString FmsBrowserWidget::seriesPrefix() const
 {
   return _prefix_check->isChecked() ? QString("fms_%1/").arg(_current_flight_id) : QString();
+}
+
+void FmsBrowserWidget::cancelDownload()
+{
+  if (!_loading)
+  {
+    return;
+  }
+  // Batches already in flight still land and import: their data is fine.
+  const int dropped = _pending_specs.size();
+  _pending_specs.clear();
+  _link_in_progress = false;
+  setStatus(QString("Cancelled, %1 series not downloaded. Waiting for %2 batch(es) in flight...")
+                .arg(dropped)
+                .arg(_in_flight));
+  if (_progress_dialog)
+  {
+    _progress_dialog->setLabelText("Cancelling, waiting for batches in flight...");
+  }
+  pumpRequests();
+}
+
+void FmsBrowserWidget::updateProgress()
+{
+  const int steps = _progress_total > 0 ?
+                        static_cast<int>(_progress_done * PROGRESS_STEPS / _progress_total) :
+                        PROGRESS_STEPS;
+  _progress_bar->setValue(std::min(steps, PROGRESS_STEPS));
+  if (_progress_dialog && !_progress_dialog->wasCanceled())
+  {
+    _progress_dialog->setValue(std::min(steps, PROGRESS_STEPS));
+    _progress_dialog->setLabelText(QString("Downloading flight %1: %2 series, %3 MiB so far "
+                                           "(%4 remaining)")
+                                       .arg(_current_flight_id)
+                                       .arg(_downloaded_series)
+                                       .arg(_downloaded_bytes / 1024 / 1024)
+                                       .arg(_pending_specs.size() + _in_flight));
+  }
+}
+
+void FmsBrowserWidget::finishProgress()
+{
+  _progress_bar->hide();
+  if (_progress_dialog)
+  {
+    _progress_dialog->deleteLater();
+    _progress_dialog = nullptr;
+  }
 }
 
 void FmsBrowserWidget::setStatus(const QString& text, bool error)
