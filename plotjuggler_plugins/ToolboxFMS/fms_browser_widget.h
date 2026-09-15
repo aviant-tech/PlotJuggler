@@ -15,6 +15,8 @@ class QLineEdit;
 class QListWidget;
 class QNetworkAccessManager;
 class QNetworkReply;
+class QProgressBar;
+class QProgressDialog;
 class QPushButton;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -53,6 +55,7 @@ private slots:
   void onFlightSelected();
   void loadSelectedSeries();
   void downloadAllSeries();
+  void cancelDownload();
 
 private:
   QNetworkReply* apiGet(const QString& path_and_query);
@@ -65,6 +68,7 @@ private:
   void pumpRequests();
   void requestNextBatch();
   qint64 estimatedBytes(const QString& spec) const;
+  qint64 progressWeight(const QString& spec) const;
   void startDownload(const QStringList& specs, int already_loaded);
   QStringList allSpecs() const;
   void downloadAll(bool confirm);
@@ -73,6 +77,8 @@ private:
   void emitImport(PJ::PlotDataMapRef& map);
   void setStatus(const QString& text, bool error = false);
   void updateLoadButton();
+  void updateProgress();
+  void finishProgress();
 
   QString topicLabel(const QString& dataset, int multi_id) const;
   static QString fieldLabel(const QString& field);
@@ -96,7 +102,12 @@ private:
   QPushButton* _search_button;
   QPushButton* _load_button;
   QPushButton* _download_all_button;
+  QPushButton* _cancel_button;
   QLabel* _status_label;
+  QProgressBar* _progress_bar;
+  // shown over the plot view while the panel is hidden (deep link), so the
+  // download is visible and can be cancelled without opening the browser
+  QProgressDialog* _progress_dialog = nullptr;
 
   QNetworkAccessManager* _network;
 
@@ -116,6 +127,10 @@ private:
 
   QStringList _pending_specs;
   int _in_flight = 0;
+  // progress in estimated bytes (one unit per series when the server sends no
+  // sample counts), so the bar tracks the transfer rather than the batch count
+  qint64 _progress_total = 0;
+  qint64 _progress_done = 0;
   // profiling: see qDebug() output tagged [ToolboxFMS]
   QElapsedTimer _download_timer;
   qint64 _downloaded_bytes = 0;
