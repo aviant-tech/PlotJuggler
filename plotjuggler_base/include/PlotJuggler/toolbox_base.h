@@ -50,6 +50,12 @@ public slots:
 
   virtual bool onShowWidget() = 0;
 
+  /// A curve whose series is registered but still empty was placed on a
+  /// plot. A toolbox that registers series lazily fetches the data now.
+  virtual void onSeriesRequested(const std::string& /*series_name*/)
+  {
+  }
+
 signals:
 
   void plotCreated(std::string plot_name, bool is_custom = true);

@@ -64,3 +64,8 @@ bool ToolboxFMS::onShowWidget()
   _widget->onShow();
   return true;
 }
+
+void ToolboxFMS::onSeriesRequested(const std::string& series_name)
+{
+  _widget->fetchSeries(QString::fromStdString(series_name));
+}

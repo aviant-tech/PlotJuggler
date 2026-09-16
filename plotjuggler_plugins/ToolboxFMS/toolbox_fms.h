@@ -24,6 +24,7 @@ public:
 
 public slots:
   bool onShowWidget() override;
+  void onSeriesRequested(const std::string& series_name) override;
 
 private slots:
   /// Opens the toolbox by triggering the menu action the host registered for it.

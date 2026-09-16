@@ -699,6 +699,8 @@ void MainWindow::initializePlugins()
 
     connect(action, &QAction::triggered, toolbox_ptr, &ToolboxPlugin::onShowWidget);
 
+    connect(this, &MainWindow::seriesRequested, toolbox_ptr, &ToolboxPlugin::onSeriesRequested);
+
     connect(action, &QAction::triggered, this,
             [this, new_index]() { ui->widgetStack->setCurrentIndex(new_index); });
 
@@ -821,9 +823,21 @@ void MainWindow::onPlotAdded(PlotWidget* plot)
 
   connect(this, &MainWindow::dataSourceRemoved, plot, &PlotWidget::onDataSourceRemoved);
 
-  connect(plot, &PlotWidget::curveListChanged, this, [this]() {
+  connect(plot, &PlotWidget::curveListChanged, this, [this, plot]() {
     updateTimeOffset();
     updateTimeSlider();
+    // A curve placed on a plot while its series is still empty is a request
+    // for that series' data, for sources that register series before
+    // fetching them (the FMS toolbox). Re-emitting for a series already on
+    // its way is harmless: the source is expected to deduplicate.
+    for (const auto& curve : plot->curveList())
+    {
+      auto it = _mapped_plot_data.numeric.find(curve.src_name);
+      if (it != _mapped_plot_data.numeric.end() && it->second.size() == 0)
+      {
+        emit seriesRequested(curve.src_name);
+      }
+    }
   });
 
   connect(&_time_offset, &MonitoredValue::valueChanged, plot, &PlotWidget::on_changeTimeOffset);

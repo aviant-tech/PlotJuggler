@@ -257,6 +257,9 @@ private:
 
 signals:
   void dataSourceRemoved(const std::string& name);
+  /// A curve on a plot refers to a series that has no data yet (see
+  /// ToolboxPlugin::onSeriesRequested).
+  void seriesRequested(const std::string& name);
   void dataSourceUpdated(const std::string& name);
   void activateTracker(bool active);
   void stylesheetChanged(QString style_name);

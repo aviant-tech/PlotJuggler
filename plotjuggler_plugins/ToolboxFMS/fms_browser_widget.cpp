@@ -526,6 +526,9 @@ void FmsBrowserWidget::populateFieldTree(const QByteArray& info_json)
 
   _field_tree->blockSignals(true);
   _field_tree->clear();
+  _spec_by_series.clear();
+  _specs_by_topic.clear();
+  _requested_specs.clear();
   for (const QJsonValue& value : datasets)
   {
     const QJsonObject dataset = value.toObject();
@@ -548,24 +551,77 @@ void FmsBrowserWidget::populateFieldTree(const QByteArray& info_json)
       auto* field_item = new QTreeWidgetItem(topic_item, { fieldLabel(field_name) });
       field_item->setFlags(field_item->flags() | Qt::ItemIsUserCheckable);
       field_item->setCheckState(0, Qt::Unchecked);
-      field_item->setData(0, SPEC_ROLE,
-                          QString("%1_%2.%3").arg(name).arg(multi_id).arg(field_name));
+      const QString spec = QString("%1_%2.%3").arg(name).arg(multi_id).arg(field_name);
+      field_item->setData(0, SPEC_ROLE, spec);
       field_item->setToolTip(0, field_name + " (" + field["type"].toString() + ")");
+      _spec_by_series[seriesName(name, multi_id, field_name)] = spec;
+      _specs_by_topic[topic].append(spec);
     }
   }
   _field_tree->blockSignals(false);
   applyFieldFilter(_field_filter_edit->text());
   updateLoadButton();
-  setStatus(QString("Flight %1: %2 topics. Check fields, then load.")
+  registerAllSeries();
+  setStatus(QString("Flight %1: %2 topics in the curve list. Drop one on a plot to fetch it, "
+                    "or check fields and load.")
                 .arg(_current_flight_id)
                 .arg(datasets.size()));
+  // A deep link ends here: the flight is open and every series is a drag
+  // away. "Download all" is for pulling everything up front.
+  _link_in_progress = false;
+}
 
-  if (_link_in_progress)
+void FmsBrowserWidget::registerAllSeries()
+{
+  // Every series of the flight goes into the curve list now, empty. The host
+  // asks for the data (fetchSeries) the moment one is placed on a plot, so a
+  // 49-minute flight opens in the time ulog-info takes instead of the time
+  // its gigabytes take. Parameters are one point each and come along now.
+  PJ::PlotDataMapRef map;
+  const QString prefix = seriesPrefix();
+  for (const auto& [name, spec] : _spec_by_series)
   {
-    // Opened from an FMS deep link: load the whole flight without waiting for
-    // a click. Only for the flight the link named, not for later selections.
-    downloadAll();
+    const QString topic = name.mid(prefix.size(), name.lastIndexOf('/') - prefix.size());
+    auto group = map.getOrCreateGroup((prefix + topic).toStdString());
+    map.addNumeric(name.toStdString(), group);
   }
+  if (_parameters_check->isChecked() && !_parameters_imported)
+  {
+    importParameters(map);
+    _parameters_imported = true;
+  }
+  emitImport(map);
+}
+
+QString FmsBrowserWidget::seriesName(const QString& dataset, int multi_id,
+                                     const QString& field) const
+{
+  return seriesPrefix() + topicLabel(dataset, multi_id) + "/" + fieldLabel(field);
+}
+
+void FmsBrowserWidget::fetchSeries(const QString& series_name)
+{
+  const auto spec_it = _spec_by_series.find(series_name);
+  if (spec_it == _spec_by_series.end())
+  {
+    return;  // not one of ours
+  }
+  // Fetch the whole topic, not just the field: the timestamps are shared
+  // anyway, the siblings are usually next, and one request beats a dozen.
+  const QString topic = series_name.mid(0, series_name.lastIndexOf('/')).mid(seriesPrefix().size());
+  QStringList specs;
+  for (const QString& spec : _specs_by_topic[topic])
+  {
+    if (!_loaded_specs.count(spec) && !_requested_specs.count(spec))
+    {
+      specs.append(spec);
+    }
+  }
+  if (specs.isEmpty())
+  {
+    return;  // loaded, or already on its way
+  }
+  enqueueSpecs(specs, true);
 }
 
 void FmsBrowserWidget::applyFieldFilter(const QString& text)
@@ -631,17 +687,40 @@ void FmsBrowserWidget::startDownload(const QStringList& specs, int already_loade
     setStatus(already_loaded ? "All selected series are already loaded." : "Nothing selected.");
     return;
   }
+  enqueueSpecs(specs, false);
+}
+
+void FmsBrowserWidget::enqueueSpecs(const QStringList& specs, bool quiet)
+{
+  if (_loading)
+  {
+    // A download is running: join it. The pump picks the new specs up as
+    // connections free, and the bar's total grows to match.
+    for (const QString& spec : specs)
+    {
+      _requested_specs.insert(spec);
+      _progress_total += progressWeight(spec);
+    }
+    _pending_specs.append(specs);
+    updateProgress();
+    pumpRequests();
+    return;
+  }
   _pending_specs = specs;
   _loading = true;
   _progress_total = 0;
   _progress_done = 0;
   for (const QString& spec : specs)
   {
+    _requested_specs.insert(spec);
     _progress_total += progressWeight(spec);
   }
   _progress_bar->setValue(0);
   _progress_bar->show();
-  if (!isVisible())
+  // A plot asking for a topic is a small fetch that finishes before a dialog
+  // would be worth reading; the explicit downloads get one when the panel
+  // is hidden and the user is looking at the plots.
+  if (!quiet && !isVisible())
   {
     // Deep link: the panel is hidden and the user is looking at the plot view,
     // so give the download a face of its own there. Non-modal, so the plots
@@ -667,8 +746,7 @@ void FmsBrowserWidget::startDownload(const QStringList& specs, int already_loade
   _import_ms = 0;
   _download_timer.start();
   qDebug() << "[ToolboxFMS] download start: flight" << _current_flight_id << "series"
-           << specs.size() << "already loaded" << already_loaded << "concurrency"
-           << MAX_CONCURRENT_REQUESTS;
+           << specs.size() << "concurrency" << MAX_CONCURRENT_REQUESTS;
   updateLoadButton();
   pumpRequests();
 }
@@ -740,6 +818,7 @@ void FmsBrowserWidget::pumpRequests()
   {
     _loading = false;
     _link_in_progress = false;
+    _requested_specs.clear();
     finishProgress();
     const qint64 total_ms = qMax<qint64>(_download_timer.elapsed(), 1);
     qDebug().nospace() << "[ToolboxFMS] download done: " << _downloaded_series << " series, "
@@ -822,6 +901,10 @@ void FmsBrowserWidget::requestNextBatch()
                 true);
       // Stop sending more, but let the batches already in flight land: their
       // data is fine, and they have been paid for already.
+      for (const QString& spec : _pending_specs)
+      {
+        _requested_specs.erase(spec);
+      }
       _pending_specs.clear();
       updateProgress();
       pumpRequests();
@@ -854,10 +937,8 @@ void FmsBrowserWidget::addSeries(PJ::PlotDataMapRef& map, const QString& dataset
                                  const QString& field, const double* timestamps,
                                  const double* values, int count)
 {
-  const QString prefix = seriesPrefix();
-  const QString topic = topicLabel(dataset, multi_id);
-  const QString name = prefix + topic + "/" + fieldLabel(field);
-  auto group = map.getOrCreateGroup((prefix + topic).toStdString());
+  const QString name = seriesName(dataset, multi_id, field);
+  auto group = map.getOrCreateGroup((seriesPrefix() + topicLabel(dataset, multi_id)).toStdString());
   auto plot_it = map.addNumeric(name.toStdString(), group);
   for (int i = 0; i < count; i++)
   {
@@ -941,6 +1022,7 @@ void FmsBrowserWidget::importSeriesPayload(const QByteArray& payload)
         addSeries(map, dataset["dataset"].toString(), dataset["multi_id"].toInt(),
                   field["field"].toString(), timestamps.data(), values.data(), count);
         _loaded_specs.insert(field["spec"].toString());
+        _requested_specs.erase(field["spec"].toString());
         imported++;
       }
     }
@@ -963,6 +1045,7 @@ void FmsBrowserWidget::importSeriesPayload(const QByteArray& payload)
       addSeries(map, series["dataset"].toString(), series["multi_id"].toInt(),
                 series["field"].toString(), data.data(), data.data() + count, count);
       _loaded_specs.insert(series["spec"].toString());
+      _requested_specs.erase(series["spec"].toString());
       imported++;
     }
   }
@@ -1063,6 +1146,10 @@ void FmsBrowserWidget::cancelDownload()
   }
   // Batches already in flight still land and import: their data is fine.
   const int dropped = _pending_specs.size();
+  for (const QString& spec : _pending_specs)
+  {
+    _requested_specs.erase(spec);
+  }
   _pending_specs.clear();
   _link_in_progress = false;
   setStatus(QString("Cancelled, %1 series not downloaded. Waiting for %2 batch(es) in flight...")

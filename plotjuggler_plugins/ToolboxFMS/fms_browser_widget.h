@@ -44,6 +44,9 @@ public:
   /// needs the user - no token, no such flight, or an error.
   void openFlightFromLink(const QString& flight_id);
 
+  /// A registered-but-empty series was put on a plot: fetch its whole topic.
+  void fetchSeries(const QString& series_name);
+
 signals:
   void importData(PJ::PlotDataMapRef& data, bool remove_old);
   void closed();
@@ -70,6 +73,9 @@ private:
   qint64 estimatedBytes(const QString& spec) const;
   qint64 progressWeight(const QString& spec) const;
   void startDownload(const QStringList& specs, int already_loaded);
+  void enqueueSpecs(const QStringList& specs, bool quiet);
+  void registerAllSeries();
+  QString seriesName(const QString& dataset, int multi_id, const QString& field) const;
   QStringList allSpecs() const;
   void importSeriesPayload(const QByteArray& payload);
   void addSeries(PJ::PlotDataMapRef& map, const QString& dataset, int multi_id,
@@ -121,6 +127,11 @@ private:
   std::map<QString, qint64> _sample_counts;
   // specs already imported for the current flight, to avoid duplicated points
   std::set<QString> _loaded_specs;
+  // specs pending or in flight, so a plot asking twice does not fetch twice
+  std::set<QString> _requested_specs;
+  // series name -> spec, and topic label -> its specs, for lazy fetches
+  std::map<QString, QString> _spec_by_series;
+  std::map<QString, QStringList> _specs_by_topic;
   // parameters of the currently selected flight, imported as one-point series
   std::map<QString, double> _parameters;
   double _log_start_time_s = 0.0;
