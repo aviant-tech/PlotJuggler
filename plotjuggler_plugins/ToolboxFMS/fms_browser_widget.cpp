@@ -717,21 +717,21 @@ void FmsBrowserWidget::enqueueSpecs(const QStringList& specs, bool quiet)
   }
   _progress_bar->setValue(0);
   _progress_bar->show();
-  // A plot asking for a topic is a small fetch that finishes before a dialog
-  // would be worth reading; the explicit downloads get one when the panel
-  // is hidden and the user is looking at the plots.
-  if (!quiet && !isVisible())
+  if (!isVisible())
   {
-    // Deep link: the panel is hidden and the user is looking at the plot view,
-    // so give the download a face of its own there. Non-modal, so the plots
-    // that have already landed stay usable while the rest arrives.
+    // The panel is hidden and the user is looking at the plot view, so give
+    // the download a face of its own there. Non-modal, so the plots that
+    // have already landed stay usable while the rest arrives. A fetch that a
+    // plot or the curve list asked for is usually over in well under a
+    // second, so those only get the dialog once they have run long enough
+    // to be worth one; the explicit downloads get it at once.
     delete _progress_dialog;
     _progress_dialog =
         new QProgressDialog(QString("Downloading flight %1...").arg(_current_flight_id), "Cancel",
                             0, PROGRESS_STEPS, window());
     _progress_dialog->setWindowTitle("FMS Flight Browser");
     _progress_dialog->setWindowModality(Qt::NonModal);
-    _progress_dialog->setMinimumDuration(0);
+    _progress_dialog->setMinimumDuration(quiet ? 700 : 0);
     _progress_dialog->setAutoClose(false);
     _progress_dialog->setAutoReset(false);
     _progress_dialog->setValue(0);

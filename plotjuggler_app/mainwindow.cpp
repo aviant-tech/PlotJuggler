@@ -725,6 +725,9 @@ void MainWindow::initializePlugins()
             [this](PlotDataMapRef& new_data, bool remove_old) {
               importPlotDataMap(new_data, remove_old);
               updateDataAndReplot(true);
+              // Series that were empty now have values at the tracker time;
+              // the value column only refreshes itself on scroll and expand.
+              onUpdateLeftTableValues();
             });
 
     connect(toolbox_ptr, &ToolboxPlugin::plotCreated, this, [=](std::string name, bool is_custom) {
