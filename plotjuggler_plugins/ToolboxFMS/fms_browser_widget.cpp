@@ -773,8 +773,9 @@ void FmsBrowserWidget::requestNextBatch()
 {
   QUrlQuery query;
   // Shared timestamps and native dtypes; an older server ignores this and
-  // answers PJS1, which importSeriesPayload() still takes.
-  query.addQueryItem("format", "pjs2");
+  // answers PJS1, which importSeriesPayload() still takes. Not "format":
+  // Django REST Framework owns that parameter and 404s on unknown values.
+  query.addQueryItem("layout", "pjs2");
   const int max_batch = std::min<int>(_pending_specs.size(), FIELDS_PER_REQUEST);
   int batch_size = 0;
   qint64 batch_bytes = 0;
