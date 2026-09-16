@@ -125,6 +125,9 @@ signals:
   void deleteCurves(const std::vector<std::string>& curve_names);
 
   void requestDeleteAll(int);
+
+  /// A group in the tree was expanded; these are the curves directly under it.
+  void groupExpanded(const std::vector<std::string>& curve_names);
 };
 
 #endif  // CURVE_SELECTOR_H

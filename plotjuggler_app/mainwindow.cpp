@@ -184,6 +184,20 @@ MainWindow::MainWindow(const QCommandLineParser& commandline_parser, QWidget* pa
   connect(_curvelist_widget, &CurveListPanel::refreshMathPlot, this,
           &MainWindow::onRefreshCustomPlot);
 
+  // Expanding a topic in the curve list asks lazy sources for its data, the
+  // same way dropping one of its curves on a plot does.
+  connect(_curvelist_widget, &CurveListPanel::groupExpanded, this,
+          [this](const std::vector<std::string>& names) {
+            for (const auto& name : names)
+            {
+              auto it = _mapped_plot_data.numeric.find(name);
+              if (it != _mapped_plot_data.numeric.end() && it->second.size() == 0)
+              {
+                emit seriesRequested(name);
+              }
+            }
+          });
+
   connect(ui->timeSlider, &RealSlider::realValueChanged, this,
           &MainWindow::onTimeSlider_valueChanged);
 

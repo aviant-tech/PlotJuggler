@@ -83,6 +83,24 @@ CurveListPanel::CurveListPanel(PlotDataMapRef& mapped_plot_data,
           &CurveListPanel::refreshValues);
 
   connect(_tree_view, &QTreeWidget::itemExpanded, this, &CurveListPanel::refreshValues);
+
+  connect(_tree_view, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* item) {
+    // Only the curves one level down: expanding a topic names its fields,
+    // expanding a whole flight names nothing (its children are topics).
+    std::vector<std::string> names;
+    for (int i = 0; i < item->childCount(); i++)
+    {
+      auto* child = item->child(i);
+      if (child->childCount() == 0 && child->data(0, CustomRoles::Name).isValid())
+      {
+        names.push_back(child->data(0, CustomRoles::Name).toString().toStdString());
+      }
+    }
+    if (!names.empty())
+    {
+      emit groupExpanded(names);
+    }
+  });
 }
 
 CurveListPanel::~CurveListPanel()
