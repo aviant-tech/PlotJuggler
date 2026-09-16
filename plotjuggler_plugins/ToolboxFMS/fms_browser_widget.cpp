@@ -47,7 +47,10 @@ constexpr int FIELDS_PER_REQUEST = 50;
 // a 32 MB cap takes 23.7 s against 26.7 s uncapped, while an 8 MB cap turns
 // 73 batches into 124 and ends up slower at 27.8 s. The tail matters more the
 // more connections there are - the same cap is worth 33% at 8 connections.
-constexpr qint64 BYTES_PER_SAMPLE = 16;  // float64 timestamp + float64 value
+// PJS1 size: float64 timestamp + float64 value. PJS2 shares timestamps and
+// keeps native dtypes, so this is an upper bound there, which is the safe
+// side for both the batch cap and the progress weights.
+constexpr qint64 BYTES_PER_SAMPLE = 16;
 constexpr qint64 MAX_BATCH_BYTES = 32 * 1024 * 1024;
 // The FMS server answers 500 once the request URL passes ~3.6 kB, so cap the
 // query too: field specs vary in length, and 50 long ones would overshoot.
@@ -73,6 +76,48 @@ constexpr int PROGRESS_STEPS = 1000;
 // plotjuggler://fms/flight/... URL cannot point this plugin - and the API token
 // it sends - at somebody else's server.
 constexpr const char* FMS_SERVER = "https://fms.aviant.no";
+
+// Width in bytes of a numpy dtype string such as "<f4" or "|u1".
+int dtypeSize(const QString& dtype)
+{
+  return dtype.mid(2).toInt();
+}
+
+// Widen `count` little-endian values of numpy dtype `dtype` to double. The
+// payload is not necessarily aligned, so copy before use. False for a dtype
+// the server never sends.
+bool widenValues(const char* bytes, const QString& dtype, int count, std::vector<double>& out)
+{
+  auto widen = [&](auto tag) {
+    using T = decltype(tag);
+    std::vector<T> raw(size_t(count));
+    std::memcpy(raw.data(), bytes, sizeof(T) * size_t(count));
+    out.assign(raw.begin(), raw.end());
+  };
+  if (dtype == "<f8")
+    widen(double{});
+  else if (dtype == "<f4")
+    widen(float{});
+  else if (dtype == "<i8")
+    widen(qint64{});
+  else if (dtype == "<u8")
+    widen(quint64{});
+  else if (dtype == "<i4")
+    widen(qint32{});
+  else if (dtype == "<u4")
+    widen(quint32{});
+  else if (dtype == "<i2")
+    widen(qint16{});
+  else if (dtype == "<u2")
+    widen(quint16{});
+  else if (dtype == "|i1")
+    widen(qint8{});
+  else if (dtype == "|u1" || dtype == "|b1")
+    widen(quint8{});
+  else
+    return false;
+  return true;
+}
 }  // namespace
 
 FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
@@ -727,6 +772,9 @@ qint64 FmsBrowserWidget::progressWeight(const QString& spec) const
 void FmsBrowserWidget::requestNextBatch()
 {
   QUrlQuery query;
+  // Shared timestamps and native dtypes; an older server ignores this and
+  // answers PJS1, which importSeriesPayload() still takes.
+  query.addQueryItem("format", "pjs2");
   const int max_batch = std::min<int>(_pending_specs.size(), FIELDS_PER_REQUEST);
   int batch_size = 0;
   qint64 batch_bytes = 0;
@@ -801,9 +849,26 @@ void FmsBrowserWidget::requestNextBatch()
   });
 }
 
+void FmsBrowserWidget::addSeries(PJ::PlotDataMapRef& map, const QString& dataset, int multi_id,
+                                 const QString& field, const double* timestamps,
+                                 const double* values, int count)
+{
+  const QString prefix = seriesPrefix();
+  const QString topic = topicLabel(dataset, multi_id);
+  const QString name = prefix + topic + "/" + fieldLabel(field);
+  auto group = map.getOrCreateGroup((prefix + topic).toStdString());
+  auto plot_it = map.addNumeric(name.toStdString(), group);
+  for (int i = 0; i < count; i++)
+  {
+    plot_it->second.pushBack(PJ::PlotData::Point(timestamps[i], values[i]));
+  }
+  _downloaded_samples += count;
+}
+
 void FmsBrowserWidget::importSeriesPayload(const QByteArray& payload)
 {
-  if (payload.size() < 8 || !payload.startsWith("PJS1"))
+  const bool pjs2 = payload.startsWith("PJS2");
+  if (payload.size() < 8 || !(pjs2 || payload.startsWith("PJS1")))
   {
     setStatus("Unexpected series response format", true);
     return;
@@ -823,37 +888,82 @@ void FmsBrowserWidget::importSeriesPayload(const QByteArray& payload)
   PJ::PlotDataMapRef map;
   qint64 offset = 8 + header_len;
   int imported = 0;
-  const QString prefix = seriesPrefix();
-
-  for (const QJsonValue& value : header["series"].toArray())
-  {
-    const QJsonObject series = value.toObject();
-    const int count = series["count"].toInt();
-    if (payload.size() < offset + qint64(count) * 16)
+  auto remaining = [&](qint64 needed) {
+    if (payload.size() < offset + needed)
     {
       setStatus("Truncated series response", true);
-      return;
+      return false;
     }
-    const QString topic =
-        topicLabel(series["dataset"].toString(), series["multi_id"].toInt());
-    const QString name = prefix + topic + "/" + fieldLabel(series["field"].toString());
+    return true;
+  };
 
-    auto group = map.getOrCreateGroup((prefix + topic).toStdString());
-    auto plot_it = map.addNumeric(name.toStdString(), group);
-
-    // the payload is not necessarily 8-byte aligned, so copy before use
-    std::vector<double> data(size_t(count) * 2);
-    std::memcpy(data.data(), payload.constData() + offset, size_t(count) * 16);
-    const double* timestamps = data.data();
-    const double* values = data.data() + count;
-    for (int i = 0; i < count; i++)
+  if (pjs2)
+  {
+    // Per dataset: int64 microsecond deltas (first absolute), then each field
+    // in its own dtype. See ULogSeriesView in flight-management.
+    std::vector<qint64> deltas;
+    std::vector<double> timestamps;
+    std::vector<double> values;
+    for (const QJsonValue& value : header["datasets"].toArray())
     {
-      plot_it->second.pushBack(PJ::PlotData::Point(timestamps[i], values[i]));
+      const QJsonObject dataset = value.toObject();
+      const int count = dataset["count"].toInt();
+      if (!remaining(qint64(count) * 8))
+      {
+        return;
+      }
+      deltas.resize(size_t(count));
+      std::memcpy(deltas.data(), payload.constData() + offset, size_t(count) * 8);
+      offset += qint64(count) * 8;
+      timestamps.resize(size_t(count));
+      qint64 t_us = 0;
+      for (int i = 0; i < count; i++)
+      {
+        t_us += deltas[size_t(i)];
+        timestamps[size_t(i)] = double(t_us) / 1e6;
+      }
+      for (const QJsonValue& field_value : dataset["fields"].toArray())
+      {
+        const QJsonObject field = field_value.toObject();
+        const QString dtype = field["dtype"].toString();
+        const qint64 bytes = qint64(count) * dtypeSize(dtype);
+        if (!remaining(bytes))
+        {
+          return;
+        }
+        if (!widenValues(payload.constData() + offset, dtype, count, values))
+        {
+          setStatus("Unsupported series dtype " + dtype, true);
+          return;
+        }
+        offset += bytes;
+        addSeries(map, dataset["dataset"].toString(), dataset["multi_id"].toInt(),
+                  field["field"].toString(), timestamps.data(), values.data(), count);
+        _loaded_specs.insert(field["spec"].toString());
+        imported++;
+      }
     }
-    offset += qint64(count) * 16;
-    _loaded_specs.insert(series["spec"].toString());
-    _downloaded_samples += count;
-    imported++;
+  }
+  else
+  {
+    // Per series: float64 seconds, then float64 values.
+    std::vector<double> data;
+    for (const QJsonValue& value : header["series"].toArray())
+    {
+      const QJsonObject series = value.toObject();
+      const int count = series["count"].toInt();
+      if (!remaining(qint64(count) * 16))
+      {
+        return;
+      }
+      data.resize(size_t(count) * 2);
+      std::memcpy(data.data(), payload.constData() + offset, size_t(count) * 16);
+      offset += qint64(count) * 16;
+      addSeries(map, series["dataset"].toString(), series["multi_id"].toInt(),
+                series["field"].toString(), data.data(), data.data() + count, count);
+      _loaded_specs.insert(series["spec"].toString());
+      imported++;
+    }
   }
 
   if (_parameters_check->isChecked() && !_parameters_imported)

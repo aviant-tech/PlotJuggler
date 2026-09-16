@@ -72,6 +72,8 @@ private:
   void startDownload(const QStringList& specs, int already_loaded);
   QStringList allSpecs() const;
   void importSeriesPayload(const QByteArray& payload);
+  void addSeries(PJ::PlotDataMapRef& map, const QString& dataset, int multi_id,
+                 const QString& field, const double* timestamps, const double* values, int count);
   void importParameters(PJ::PlotDataMapRef& map);
   void emitImport(PJ::PlotDataMapRef& map);
   void setStatus(const QString& text, bool error = false);
