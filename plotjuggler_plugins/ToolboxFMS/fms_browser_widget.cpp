@@ -90,7 +90,7 @@ bool widenValues(const char* bytes, const QString& dtype, int count, std::vector
 {
   auto widen = [&](auto tag) {
     using T = decltype(tag);
-    std::vector<T> raw(size_t(count));
+    std::vector<T> raw(static_cast<size_t>(count));
     std::memcpy(raw.data(), bytes, sizeof(T) * size_t(count));
     out.assign(raw.begin(), raw.end());
   };
