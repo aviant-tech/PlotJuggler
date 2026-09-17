@@ -715,6 +715,11 @@ void MainWindow::initializePlugins()
 
     connect(this, &MainWindow::seriesRequested, toolbox_ptr, &ToolboxPlugin::onSeriesRequested);
 
+    connect(toolbox_ptr, &ToolboxPlugin::groupProgress, this,
+            [this](std::string group_name, int percent) {
+              _curvelist_widget->setGroupProgress(group_name, percent);
+            });
+
     connect(action, &QAction::triggered, this,
             [this, new_index]() { ui->widgetStack->setCurrentIndex(new_index); });
 

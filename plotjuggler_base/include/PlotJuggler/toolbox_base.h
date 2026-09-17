@@ -64,6 +64,10 @@ signals:
 
   void closed();
 
+  /// Progress of a fetch for the series of one group, 0..100. The host shows
+  /// it on the group's row in the curve list; 100 clears it.
+  void groupProgress(std::string group_name, int percent);
+
 private:
   ParserFactories* _parser_factories = nullptr;
 };

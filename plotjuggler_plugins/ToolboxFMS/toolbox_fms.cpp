@@ -14,6 +14,8 @@ ToolboxFMS::ToolboxFMS()
   connect(_widget, &FmsBrowserWidget::importData, this, &ToolboxFMS::importData);
   connect(_widget, &FmsBrowserWidget::closed, this, &ToolboxFMS::closed);
   connect(_widget, &FmsBrowserWidget::showRequested, this, &ToolboxFMS::showFromMenuAction);
+  connect(_widget, &FmsBrowserWidget::groupProgress, this,
+          [this](const QString& group, int percent) { emit groupProgress(group.toStdString(), percent); });
 
   const QString link_flight = qEnvironmentVariable("FMS_FLIGHT_ID");
   if (!link_flight.isEmpty())

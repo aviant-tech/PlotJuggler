@@ -52,6 +52,8 @@ signals:
   void closed();
   /// The panel has something the user has to see (an error, a token prompt).
   void showRequested();
+  /// Fetch progress per topic group, for the curve list; 100 means done.
+  void groupProgress(const QString& group_name, int percent);
 
 private slots:
   void searchFlights();
@@ -86,6 +88,7 @@ private:
   void updateLoadButton();
   void updateProgress();
   void finishProgress();
+  void reportTopicProgress();
 
   QString topicLabel(const QString& dataset, int multi_id) const;
   static QString fieldLabel(const QString& field);
@@ -132,6 +135,8 @@ private:
   // series name -> spec, and topic label -> its specs, for lazy fetches
   std::map<QString, QString> _spec_by_series;
   std::map<QString, QStringList> _specs_by_topic;
+  // last percent sent for a topic, so the curve list only hears changes
+  std::map<QString, int> _reported_percent;
   // parameters of the currently selected flight, imported as one-point series
   std::map<QString, double> _parameters;
   double _log_start_time_s = 0.0;

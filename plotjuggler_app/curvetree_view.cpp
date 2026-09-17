@@ -423,6 +423,18 @@ void CurveTreeView::treeVisitor(std::function<void(QTreeWidgetItem*)> visitor)
   }
 }
 
+void CurveTreeView::setGroupProgress(const QString& group_name, int percent)
+{
+  // Group rows have no value of their own, so the column is free for this.
+  // refreshValues() only writes curve rows and leaves it alone.
+  treeVisitor([&](QTreeWidgetItem* item) {
+    if (item->data(0, IsGroupName).toBool() && item->data(0, Name).toString() == group_name)
+    {
+      item->setText(1, percent < 100 ? QString("%1%").arg(percent) : QString());
+    }
+  });
+}
+
 void CurveTreeView::keyPressEvent(QKeyEvent* event)
 {
   if (event->matches(QKeySequence::Copy))

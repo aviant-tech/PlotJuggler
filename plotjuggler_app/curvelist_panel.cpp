@@ -301,6 +301,11 @@ bool CurveListPanel::is2ndColumnHidden() const
   return false;
 }
 
+void CurveListPanel::setGroupProgress(const std::string& group_name, int percent)
+{
+  _tree_view->setGroupProgress(QString::fromStdString(group_name), percent);
+}
+
 void CurveListPanel::update2ndColumnValues(double tracker_time)
 {
   _tracker_time = tracker_time;

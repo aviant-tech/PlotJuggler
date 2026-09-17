@@ -529,6 +529,7 @@ void FmsBrowserWidget::populateFieldTree(const QByteArray& info_json)
   _spec_by_series.clear();
   _specs_by_topic.clear();
   _requested_specs.clear();
+  _reported_percent.clear();
   for (const QJsonValue& value : datasets)
   {
     const QJsonObject dataset = value.toObject();
@@ -703,6 +704,7 @@ void FmsBrowserWidget::enqueueSpecs(const QStringList& specs, bool quiet)
     }
     _pending_specs.append(specs);
     updateProgress();
+    reportTopicProgress();
     pumpRequests();
     return;
   }
@@ -748,6 +750,7 @@ void FmsBrowserWidget::enqueueSpecs(const QStringList& specs, bool quiet)
   qDebug() << "[ToolboxFMS] download start: flight" << _current_flight_id << "series"
            << specs.size() << "concurrency" << MAX_CONCURRENT_REQUESTS;
   updateLoadButton();
+  reportTopicProgress();
   pumpRequests();
 }
 
@@ -819,6 +822,7 @@ void FmsBrowserWidget::pumpRequests()
     _loading = false;
     _link_in_progress = false;
     _requested_specs.clear();
+    reportTopicProgress();
     finishProgress();
     const qint64 total_ms = qMax<qint64>(_download_timer.elapsed(), 1);
     qDebug().nospace() << "[ToolboxFMS] download done: " << _downloaded_series << " series, "
@@ -907,6 +911,7 @@ void FmsBrowserWidget::requestNextBatch()
       }
       _pending_specs.clear();
       updateProgress();
+      reportTopicProgress();
       pumpRequests();
       return;
     }
@@ -929,6 +934,7 @@ void FmsBrowserWidget::requestNextBatch()
                        << (waited_ms > 0 ? sent / 1024 * 1000 / waited_ms : 0) << " KiB/s )";
     importSeriesPayload(payload);
     updateProgress();
+    reportTopicProgress();
     pumpRequests();
   });
 }
@@ -1152,6 +1158,7 @@ void FmsBrowserWidget::cancelDownload()
   }
   _pending_specs.clear();
   _link_in_progress = false;
+  reportTopicProgress();
   setStatus(QString("Cancelled, %1 series not downloaded. Waiting for %2 batch(es) in flight...")
                 .arg(dropped)
                 .arg(_in_flight));
@@ -1177,6 +1184,39 @@ void FmsBrowserWidget::updateProgress()
                                        .arg(_downloaded_series)
                                        .arg(_downloaded_bytes / 1024 / 1024)
                                        .arg(_pending_specs.size() + _in_flight));
+  }
+}
+
+void FmsBrowserWidget::reportTopicProgress()
+{
+  // Per topic: loaded weight against loaded plus still-requested weight, so
+  // the row in the curve list counts up as its batches land. Only changes
+  // are sent, and a topic with nothing requested is reported once as done.
+  const QString prefix = seriesPrefix();
+  for (const auto& [topic, specs] : _specs_by_topic)
+  {
+    qint64 loaded = 0;
+    qint64 requested = 0;
+    for (const QString& spec : specs)
+    {
+      if (_requested_specs.count(spec))
+      {
+        requested += progressWeight(spec);
+      }
+      else if (_loaded_specs.count(spec))
+      {
+        loaded += progressWeight(spec);
+      }
+    }
+    const int percent =
+        requested == 0 ? 100 : static_cast<int>(loaded * 100 / (loaded + requested));
+    const auto reported = _reported_percent.find(topic);
+    const int previous = reported == _reported_percent.end() ? 100 : reported->second;
+    if (percent != previous)
+    {
+      _reported_percent[topic] = percent;
+      emit groupProgress(prefix + topic, percent);
+    }
   }
 }
 

@@ -90,6 +90,8 @@ public slots:
 
   void refreshValues();
 
+  void setGroupProgress(const std::string& group_name, int percent);
+
 protected:
 private:
   Ui::CurveListPanel* ui;
