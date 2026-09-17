@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=PlotJuggler FMS deep link
+Name=PlotJuggler FMS
 Exec=plotjuggler-fms-open %u
 Icon=plotjuggler
-Comment=Open an Aviant FMS flight in PlotJuggler
+Comment=PlotJuggler with the Aviant FMS flight browser; also handles plotjuggler:// links
 Terminal=false
-Categories=Development;
+Categories=Development;Science;
 MimeType=x-scheme-handler/plotjuggler;
-NoDisplay=true
+StartupNotify=true

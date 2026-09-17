@@ -13,17 +13,21 @@ set -eu
 
 url=${1-}
 
-# The id comes from a URL anyone can craft, so accept digits and nothing else.
-id=$(printf '%s' "$url" | sed -n 's#^plotjuggler://fms/flight/\([0-9][0-9]*\)/\{0,1\}\([?#].*\)\{0,1\}$#\1#p')
-if [ -z "$id" ]; then
-  echo "plotjuggler-fms-open: not a flight link: $url" >&2
-  exit 1
-fi
-FMS_FLIGHT_ID=$id
-export FMS_FLIGHT_ID
-
-# drop the URL, pass any extra arguments through
-shift
+# Launched from an application menu rather than a link: plain PlotJuggler.
+case $url in
+  plotjuggler://*)
+    # The id comes from a URL anyone can craft, so accept digits and nothing else.
+    id=$(printf '%s' "$url" | sed -n 's#^plotjuggler://fms/flight/\([0-9][0-9]*\)/\{0,1\}\([?#].*\)\{0,1\}$#\1#p')
+    if [ -z "$id" ]; then
+      echo "plotjuggler-fms-open: not a flight link: $url" >&2
+      exit 1
+    fi
+    FMS_FLIGHT_ID=$id
+    export FMS_FLIGHT_ID
+    # drop the URL, pass any extra arguments through
+    shift
+    ;;
+esac
 
 # Prefer the plotjuggler installed next to this script: under Nix the profile's
 # bin is not necessarily on the PATH of whatever launched the URL handler.
