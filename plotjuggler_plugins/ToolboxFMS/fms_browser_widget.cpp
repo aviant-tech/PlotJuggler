@@ -33,7 +33,6 @@
 
 namespace
 {
-constexpr int SPEC_ROLE = Qt::UserRole;  // '<dataset>_<multi_id>.<field>' spec
 constexpr int FIELDS_PER_REQUEST = 50;
 // Field count alone is a poor batch size: within one flight log the per-series
 // sample count spans more than an order of magnitude, and since the tree groups
@@ -168,17 +167,10 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
   _flight_list = new QListWidget(this);
   _flight_list->setSelectionMode(QAbstractItemView::SingleSelection);
 
-  _field_filter_edit = new QLineEdit(this);
-  _field_filter_edit->setPlaceholderText("Filter fields...");
-  _field_tree = new QTreeWidget(this);
-  _field_tree->setHeaderHidden(true);
-
   _parameters_check = new QCheckBox("Import parameters", this);
   _parameters_check->setChecked(true);
   _prefix_check = new QCheckBox("Prefix series with flight ID", this);
 
-  _load_button = new QPushButton("Load selected series", this);
-  _load_button->setEnabled(false);
   _download_all_button = new QPushButton("Download all", this);
   _cancel_button = new QPushButton("Cancel", this);
   _cancel_button->setEnabled(false);
@@ -219,24 +211,12 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
   filter_row->addStretch(1);
   filter_row->addWidget(_search_button);
 
-  auto* tree_container = new QWidget(this);
-  auto* tree_layout = new QVBoxLayout(tree_container);
-  tree_layout->setContentsMargins(0, 0, 0, 0);
-  tree_layout->addWidget(_field_filter_edit);
-  tree_layout->addWidget(_field_tree);
-
-  auto* splitter = new QSplitter(Qt::Vertical, this);
-  splitter->addWidget(_flight_list);
-  splitter->addWidget(tree_container);
-  splitter->setStretchFactor(0, 1);
-  splitter->setStretchFactor(1, 2);
-
   auto* options_row = new QHBoxLayout();
   options_row->addWidget(_parameters_check);
   options_row->addWidget(_prefix_check);
 
   auto* buttons_row = new QHBoxLayout();
-  buttons_row->addWidget(_load_button, 1);
+  buttons_row->addStretch(1);
   buttons_row->addWidget(_download_all_button);
   buttons_row->addWidget(_cancel_button);
   buttons_row->addWidget(close_button);
@@ -245,7 +225,7 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
   main_layout->addLayout(token_row);
   main_layout->addLayout(filter_form);
   main_layout->addLayout(filter_row);
-  main_layout->addWidget(splitter, 1);
+  main_layout->addWidget(_flight_list, 1);
   main_layout->addLayout(options_row);
   main_layout->addLayout(buttons_row);
   main_layout->addWidget(_progress_bar);
@@ -259,29 +239,9 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
   connect(_date_before_check, &QCheckBox::toggled, _date_before_edit, &QWidget::setEnabled);
   connect(_flight_list, &QListWidget::itemSelectionChanged, this,
           &FmsBrowserWidget::onFlightSelected);
-  connect(_load_button, &QPushButton::clicked, this, &FmsBrowserWidget::loadSelectedSeries);
   connect(_download_all_button, &QPushButton::clicked, this, &FmsBrowserWidget::downloadAll);
   connect(_cancel_button, &QPushButton::clicked, this, &FmsBrowserWidget::cancelDownload);
   connect(close_button, &QPushButton::clicked, this, [this]() { emit closed(); });
-  connect(_field_filter_edit, &QLineEdit::textChanged, this,
-          &FmsBrowserWidget::applyFieldFilter);
-
-  connect(_field_tree, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* item, int) {
-    // Toggling a topic toggles all its (visible) fields
-    if (item->childCount() > 0 && item->checkState(0) != Qt::PartiallyChecked)
-    {
-      _field_tree->blockSignals(true);
-      for (int i = 0; i < item->childCount(); i++)
-      {
-        if (!item->child(i)->isHidden())
-        {
-          item->child(i)->setCheckState(0, item->checkState(0));
-        }
-      }
-      _field_tree->blockSignals(false);
-    }
-    updateLoadButton();
-  });
 }
 
 void FmsBrowserWidget::onShow()
@@ -437,7 +397,7 @@ void FmsBrowserWidget::populateFlightList(const QByteArray& flights_json)
   QJsonArray flights = doc.isArray() ? doc.array() : doc.object()["results"].toArray();
 
   _flight_list->clear();
-  _field_tree->clear();
+  _all_specs.clear();
   updateLoadButton();
 
   for (const QJsonValue& value : flights)
@@ -475,7 +435,7 @@ void FmsBrowserWidget::onFlightSelected()
   _current_flight_id = item->data(Qt::UserRole).toInt();
   _loaded_specs.clear();
   _parameters_imported = false;
-  _field_tree->clear();
+  _all_specs.clear();
   updateLoadButton();
   setStatus(QString("Fetching ULog info for flight %1...").arg(_current_flight_id));
 
@@ -523,8 +483,7 @@ void FmsBrowserWidget::populateFieldTree(const QByteArray& info_json)
   }
   _log_start_time_s = info["start_timestamp_s"].toDouble();
 
-  _field_tree->blockSignals(true);
-  _field_tree->clear();
+  _all_specs.clear();
   _spec_by_series.clear();
   _specs_by_topic.clear();
   _requested_specs.clear();
@@ -536,10 +495,6 @@ void FmsBrowserWidget::populateFieldTree(const QByteArray& info_json)
     const QString name = dataset["name"].toString();
     const int multi_id = dataset["multi_id"].toInt();
     const QString topic = topicLabel(name, multi_id);
-
-    auto* topic_item = new QTreeWidgetItem(_field_tree, { topic });
-    topic_item->setFlags(topic_item->flags() | Qt::ItemIsUserCheckable);
-    topic_item->setCheckState(0, Qt::Unchecked);
 
     const QJsonArray fields = dataset["fields"].toArray();
     const qint64 samples = dataset["sample_count"].toVariant().toLongLong();
@@ -558,23 +513,17 @@ void FmsBrowserWidget::populateFieldTree(const QByteArray& info_json)
                             (type == "float" || type.endsWith("32_t"))  ? 4 :
                             type.endsWith("16_t")                       ? 2 :
                                                                           1;
-      auto* field_item = new QTreeWidgetItem(topic_item, { fieldLabel(field_name) });
-      field_item->setFlags(field_item->flags() | Qt::ItemIsUserCheckable);
-      field_item->setCheckState(0, Qt::Unchecked);
       const QString spec = QString("%1_%2.%3").arg(name).arg(multi_id).arg(field_name);
-      field_item->setData(0, SPEC_ROLE, spec);
-      field_item->setToolTip(0, field_name + " (" + field["type"].toString() + ")");
+      _all_specs.append(spec);
       _spec_by_series[seriesName(name, multi_id, field_name)] = spec;
       _specs_by_topic[topic].append(spec);
       _payload_bytes[spec] = samples * item_size + timestamp_share;
     }
   }
-  _field_tree->blockSignals(false);
-  applyFieldFilter(_field_filter_edit->text());
   updateLoadButton();
   registerAllSeries();
-  setStatus(QString("Flight %1: %2 topics in the curve list. Drop one on a plot to fetch it, "
-                    "or check fields and load.")
+  setStatus(QString("Flight %1: %2 topics in the curve list. Expand one or drop a series on a "
+                    "plot to fetch it, or download all.")
                 .arg(_current_flight_id)
                 .arg(datasets.size()));
   // A deep link ends here: the flight is open and every series is a drag
@@ -635,60 +584,10 @@ void FmsBrowserWidget::fetchSeries(const QString& series_name)
   enqueueSpecs(specs);
 }
 
-void FmsBrowserWidget::applyFieldFilter(const QString& text)
-{
-  for (int t = 0; t < _field_tree->topLevelItemCount(); t++)
-  {
-    QTreeWidgetItem* topic_item = _field_tree->topLevelItem(t);
-    const QString topic = topic_item->text(0);
-    const bool topic_match = topic.contains(text, Qt::CaseInsensitive);
-    bool any_visible = false;
-    for (int f = 0; f < topic_item->childCount(); f++)
-    {
-      QTreeWidgetItem* field_item = topic_item->child(f);
-      const bool visible =
-          topic_match || field_item->text(0).contains(text, Qt::CaseInsensitive);
-      field_item->setHidden(!visible);
-      any_visible |= visible;
-    }
-    topic_item->setHidden(!any_visible);
-    if (!text.isEmpty() && any_visible && !topic_match)
-    {
-      topic_item->setExpanded(true);
-    }
-  }
-}
-
 void FmsBrowserWidget::updateLoadButton()
 {
-  int checked = 0;
-  for (int t = 0; t < _field_tree->topLevelItemCount(); t++)
-  {
-    QTreeWidgetItem* topic_item = _field_tree->topLevelItem(t);
-    for (int f = 0; f < topic_item->childCount(); f++)
-    {
-      checked += (topic_item->child(f)->checkState(0) == Qt::Checked) ? 1 : 0;
-    }
-  }
-  _load_button->setEnabled(checked > 0 && !_loading);
-  _load_button->setText(checked > 0 ? QString("Load %1 selected series").arg(checked) :
-                                      "Load selected series");
-  _download_all_button->setEnabled(_field_tree->topLevelItemCount() > 0 && !_loading);
+  _download_all_button->setEnabled(!_all_specs.isEmpty() && !_loading);
   _cancel_button->setEnabled(_loading);
-}
-
-QStringList FmsBrowserWidget::allSpecs() const
-{
-  QStringList specs;
-  for (int t = 0; t < _field_tree->topLevelItemCount(); t++)
-  {
-    QTreeWidgetItem* topic_item = _field_tree->topLevelItem(t);
-    for (int f = 0; f < topic_item->childCount(); f++)
-    {
-      specs.append(topic_item->child(f)->data(0, SPEC_ROLE).toString());
-    }
-  }
-  return specs;
 }
 
 void FmsBrowserWidget::startDownload(const QStringList& specs, int already_loaded)
@@ -745,39 +644,11 @@ void FmsBrowserWidget::enqueueSpecs(const QStringList& specs)
   pumpRequests();
 }
 
-void FmsBrowserWidget::loadSelectedSeries()
-{
-  QStringList specs;
-  int skipped = 0;
-  for (int t = 0; t < _field_tree->topLevelItemCount(); t++)
-  {
-    QTreeWidgetItem* topic_item = _field_tree->topLevelItem(t);
-    for (int f = 0; f < topic_item->childCount(); f++)
-    {
-      QTreeWidgetItem* field_item = topic_item->child(f);
-      if (field_item->checkState(0) != Qt::Checked)
-      {
-        continue;
-      }
-      const QString spec = field_item->data(0, SPEC_ROLE).toString();
-      if (_loaded_specs.count(spec))
-      {
-        skipped++;
-      }
-      else
-      {
-        specs.append(spec);
-      }
-    }
-  }
-  startDownload(specs, skipped);
-}
-
 void FmsBrowserWidget::downloadAll()
 {
   QStringList specs;
   int skipped = 0;
-  for (const QString& spec : allSpecs())
+  for (const QString& spec : _all_specs)
   {
     if (_loaded_specs.count(spec))
     {

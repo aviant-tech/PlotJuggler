@@ -18,6 +18,11 @@ public:
     return "FMS Flight Browser";
   }
 
+  const char* toolbarButtonLabel() const override
+  {
+    return "FMS";
+  }
+
   void init(PJ::PlotDataMapRef& src_data, PJ::TransformsMap& transform_map) override;
 
   std::pair<QWidget*, WidgetType> providedWidget() const override;

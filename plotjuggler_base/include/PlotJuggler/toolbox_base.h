@@ -36,6 +36,13 @@ public:
 
   virtual std::pair<QWidget*, WidgetType> providedWidget() const = 0;
 
+  /// Label for a button in the main window's Data row that opens this
+  /// toolbox with one click; nullptr keeps it in the Tools menu only.
+  virtual const char* toolbarButtonLabel() const
+  {
+    return nullptr;
+  }
+
   void setParserFactories(ParserFactories* parsers)
   {
     _parser_factories = parsers;

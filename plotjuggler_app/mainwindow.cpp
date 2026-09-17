@@ -705,6 +705,18 @@ void MainWindow::initializePlugins()
 
     auto action = ui->menuTools->addAction(toolbox->name());
 
+    if (const char* label = toolbox->toolbarButtonLabel())
+    {
+      auto* button = new QPushButton(label, this);
+      button->setFlat(true);
+      button->setFocusPolicy(Qt::NoFocus);
+      button->setToolTip(toolbox->name());
+      button->setMinimumHeight(26);
+      // next to the "Load data" button, before the spacer
+      ui->horizontalLayout_3->insertWidget(2, button);
+      connect(button, &QPushButton::clicked, action, &QAction::trigger);
+    }
+
     int new_index = ui->widgetStack->count();
     auto provided = toolbox->providedWidget();
     auto widget = provided.first;

@@ -17,8 +17,6 @@ class QNetworkAccessManager;
 class QNetworkReply;
 class QProgressBar;
 class QPushButton;
-class QTreeWidget;
-class QTreeWidgetItem;
 
 /**
  * Browser for flights stored in the Aviant FMS.
@@ -57,7 +55,6 @@ signals:
 private slots:
   void searchFlights();
   void onFlightSelected();
-  void loadSelectedSeries();
   void downloadAll();
   void cancelDownload();
 
@@ -68,7 +65,6 @@ private:
   void populateAircraftCombo();
   void populateFlightList(const QByteArray& flights_json);
   void populateFieldTree(const QByteArray& info_json);
-  void applyFieldFilter(const QString& text);
   void pumpRequests();
   void requestNextBatch();
   qint64 estimatedBytes(const QString& spec) const;
@@ -77,7 +73,6 @@ private:
   void enqueueSpecs(const QStringList& specs);
   void registerAllSeries();
   QString seriesName(const QString& dataset, int multi_id, const QString& field) const;
-  QStringList allSpecs() const;
   void importSeriesPayload(const QByteArray& payload);
   void addSeries(PJ::PlotDataMapRef& map, const QString& dataset, int multi_id,
                  const QString& field, const double* timestamps, const double* values, int count);
@@ -104,13 +99,10 @@ private:
   QCheckBox* _ground_tests_check;
   QLineEdit* _oneliner_edit;
   QLineEdit* _flight_id_edit;
-  QLineEdit* _field_filter_edit;
   QListWidget* _flight_list;
-  QTreeWidget* _field_tree;
   QCheckBox* _parameters_check;
   QCheckBox* _prefix_check;
   QPushButton* _search_button;
-  QPushButton* _load_button;
   QPushButton* _download_all_button;
   QPushButton* _cancel_button;
   QLabel* _status_label;
@@ -125,6 +117,8 @@ private:
   std::map<QString, int> _instance_count;
   // '<dataset>_<multi_id>' -> samples, from ulog-info, for sizing batches
   std::map<QString, qint64> _sample_counts;
+  // every plottable field of the selected flight, in ulog-info order
+  QStringList _all_specs;
   // specs already imported for the current flight, to avoid duplicated points
   std::set<QString> _loaded_specs;
   // specs pending or in flight, so a plot asking twice does not fetch twice
