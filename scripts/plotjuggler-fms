@@ -19,7 +19,7 @@ case $url in
     # The id comes from a URL anyone can craft, so accept digits and nothing else.
     id=$(printf '%s' "$url" | sed -n 's#^plotjuggler://fms/flight/\([0-9][0-9]*\)/\{0,1\}\([?#].*\)\{0,1\}$#\1#p')
     if [ -z "$id" ]; then
-      echo "plotjuggler-fms-open: not a flight link: $url" >&2
+      echo "plotjuggler-fms: not a flight link: $url" >&2
       exit 1
     fi
     FMS_FLIGHT_ID=$id

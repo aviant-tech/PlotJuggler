@@ -310,7 +310,7 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/io.plotjuggler.PlotJuggler.desktop
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/io.plotjuggler.PlotJugglerFMS.desktop
         DESTINATION "${CMAKE_INSTALL_PREFIX}/share/applications")
 
-install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/plotjuggler-fms-open
+install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/plotjuggler-fms
         DESTINATION "${CMAKE_INSTALL_PREFIX}/bin")
 
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/plotjuggler.svg
