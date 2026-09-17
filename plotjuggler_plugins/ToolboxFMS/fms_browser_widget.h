@@ -139,8 +139,12 @@ private:
   struct InFlight
   {
     QStringList specs;
+    qint64 expected_bytes = 0;  // decompressed, for when Qt hides the total
     double fraction = 0.0;
   };
+  // spec -> bytes it occupies in a PJS2 payload (native dtype, plus its
+  // share of the topic's timestamps), from ulog-info's types
+  std::map<QString, qint64> _payload_bytes;
   std::map<QNetworkReply*, InFlight> _in_flight_batches;
   QElapsedTimer _progress_report_timer;
   // parameters of the currently selected flight, imported as one-point series

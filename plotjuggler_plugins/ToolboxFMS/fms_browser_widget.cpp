@@ -529,6 +529,7 @@ void FmsBrowserWidget::populateFieldTree(const QByteArray& info_json)
   _specs_by_topic.clear();
   _requested_specs.clear();
   _reported_percent.clear();
+  _payload_bytes.clear();
   for (const QJsonValue& value : datasets)
   {
     const QJsonObject dataset = value.toObject();
@@ -540,14 +541,23 @@ void FmsBrowserWidget::populateFieldTree(const QByteArray& info_json)
     topic_item->setFlags(topic_item->flags() | Qt::ItemIsUserCheckable);
     topic_item->setCheckState(0, Qt::Unchecked);
 
-    for (const QJsonValue& field_value : dataset["fields"].toArray())
+    const QJsonArray fields = dataset["fields"].toArray();
+    const qint64 samples = dataset["sample_count"].toVariant().toLongLong();
+    // PJS2 sends the topic's int64 timestamps once; spread them over its fields
+    const qint64 timestamp_share = 8 * samples / std::max<qint64>(1, fields.size() - 1);
+    for (const QJsonValue& field_value : fields)
     {
       const QJsonObject field = field_value.toObject();
       const QString field_name = field["name"].toString();
-      if (field_name == "timestamp" || field["type"].toString() == "char")
+      const QString type = field["type"].toString();
+      if (field_name == "timestamp" || type == "char")
       {
         continue;  // timestamps come with every series; char fields can't be plotted
       }
+      const int item_size = (type == "double" || type.endsWith("64_t")) ? 8 :
+                            (type == "float" || type.endsWith("32_t"))  ? 4 :
+                            type.endsWith("16_t")                       ? 2 :
+                                                                          1;
       auto* field_item = new QTreeWidgetItem(topic_item, { fieldLabel(field_name) });
       field_item->setFlags(field_item->flags() | Qt::ItemIsUserCheckable);
       field_item->setCheckState(0, Qt::Unchecked);
@@ -556,6 +566,7 @@ void FmsBrowserWidget::populateFieldTree(const QByteArray& info_json)
       field_item->setToolTip(0, field_name + " (" + field["type"].toString() + ")");
       _spec_by_series[seriesName(name, multi_id, field_name)] = spec;
       _specs_by_topic[topic].append(spec);
+      _payload_bytes[spec] = samples * item_size + timestamp_share;
     }
   }
   _field_tree->blockSignals(false);
@@ -873,14 +884,24 @@ void FmsBrowserWidget::requestNextBatch()
   QNetworkReply* reply = apiGet(QString("/api/analysis/flights/%1/ulog-series/?%2")
                                     .arg(_current_flight_id)
                                     .arg(query.toString(QUrl::FullyEncoded)));
-  _in_flight_batches[reply] = { batch, 0.0 };
+  qint64 expected_bytes = 0;
+  for (const QString& spec : batch)
+  {
+    const auto it = _payload_bytes.find(spec);
+    expected_bytes += it == _payload_bytes.end() ? 0 : it->second;
+  }
+  _in_flight_batches[reply] = { batch, expected_bytes, 0.0 };
   connect(reply, &QNetworkReply::downloadProgress, this,
           [this, reply](qint64 received, qint64 total) {
-            // Qt reports the wire bytes here, so the total is known whenever
-            // the server sent Content-Length, which it does.
-            if (total > 0)
+            // Qt drops Content-Length once it decompresses, so the total is
+            // usually -1 here and the bytes are the decompressed ones. Then
+            // measure against what the batch should decompress to, which we
+            // know from ulog-info's sample counts and types.
+            auto& in_flight = _in_flight_batches[reply];
+            const qint64 expected = total > 0 ? total : in_flight.expected_bytes;
+            if (expected > 0)
             {
-              _in_flight_batches[reply].fraction = std::min(1.0, double(received) / double(total));
+              in_flight.fraction = std::min(0.99, double(received) / double(expected));
             }
             // Many small steps per second across eight connections: redraw
             // the rows at most ten times a second.
