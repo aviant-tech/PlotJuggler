@@ -306,12 +306,9 @@ set(DESKTOP_ICON_DIR "${CMAKE_INSTALL_PREFIX}/share/icons")
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/io.plotjuggler.PlotJuggler.desktop
         DESTINATION "${CMAKE_INSTALL_PREFIX}/share/applications")
 
-# Handler for FMS deep links: plotjuggler://flight/<id>
+# FMS entry: launcher item that also handles plotjuggler://fms/flight/<id> links
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/io.plotjuggler.PlotJugglerFMS.desktop
         DESTINATION "${CMAKE_INSTALL_PREFIX}/share/applications")
-
-install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/plotjuggler-fms
-        DESTINATION "${CMAKE_INSTALL_PREFIX}/bin")
 
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/plotjuggler.svg
         DESTINATION ${DESKTOP_ICON_DIR})

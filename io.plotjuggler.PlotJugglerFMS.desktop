@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=PlotJuggler FMS
-Exec=plotjuggler-fms %u
+Exec=plotjuggler %u
 Icon=plotjuggler
 Comment=PlotJuggler with the Aviant FMS flight browser; also handles plotjuggler:// links
 Terminal=false
