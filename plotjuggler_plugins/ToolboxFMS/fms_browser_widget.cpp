@@ -239,6 +239,13 @@ FmsBrowserWidget::FmsBrowserWidget(QWidget* parent) : QWidget(parent)
   connect(_date_before_check, &QCheckBox::toggled, _date_before_edit, &QWidget::setEnabled);
   connect(_flight_list, &QListWidget::itemSelectionChanged, this,
           &FmsBrowserWidget::onFlightSelected);
+  // Double-click: open the flight and get out of the way. Selecting it starts
+  // the ulog-info request (if it is not the current flight already) and the
+  // curve list fills in when that lands, whether the panel is showing or not.
+  connect(_flight_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
+    _flight_list->setCurrentItem(item);
+    emit closed();
+  });
   connect(_download_all_button, &QPushButton::clicked, this, &FmsBrowserWidget::downloadAll);
   connect(_cancel_button, &QPushButton::clicked, this, &FmsBrowserWidget::cancelDownload);
   connect(close_button, &QPushButton::clicked, this, [this]() { emit closed(); });
