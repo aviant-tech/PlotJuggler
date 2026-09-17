@@ -18,6 +18,7 @@
 #include <QNetworkReply>
 #include <QJsonDocument>
 #include <QDir>
+#include <QUrl>
 #include <QDialog>
 #include <QDesktopServices>
 #include <QHostInfo>
@@ -304,6 +305,20 @@ int main(int argc, char* argv[])
   parser.addOption(window_title);
 
   parser.process(*qApp);
+
+  // Files given without -d, as a desktop entry's %U or `plotjuggler flight.ulg`
+  // does, are data files. A launcher hands them over as file:// URLs.
+  const QStringList positional_files = parser.positionalArguments();
+  if (!positional_files.isEmpty())
+  {
+    QStringList with_datafiles = qApp->arguments();
+    for (const QString& positional : positional_files)
+    {
+      const QUrl url = QUrl::fromUserInput(positional);
+      with_datafiles << "-d" << (url.isLocalFile() ? url.toLocalFile() : positional);
+    }
+    parser.process(with_datafiles);
+  }
 
   if (parser.isSet(publish_option) && !parser.isSet(layout_option))
   {
