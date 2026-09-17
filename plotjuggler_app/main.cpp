@@ -18,6 +18,7 @@
 #include <QNetworkReply>
 #include <QJsonDocument>
 #include <QDir>
+#include <QUrl>
 #include <QDialog>
 #include <QDesktopServices>
 #include <QHostInfo>
@@ -155,6 +156,36 @@ int main(int argc, char* argv[])
   args = rclcpp::remove_ros_arguments(argc, argv);
 #endif
 
+  // FMS deep link, plotjuggler://fms/flight/<id>, handed over as a positional
+  // argument by io.plotjuggler.PlotJugglerFMS.desktop. The id goes to the FMS
+  // toolbox plugin through the environment and the argument is dropped so the
+  // command line parser never sees it. Only digits are accepted: the link is
+  // something anybody can craft.
+  const std::string link_prefix = "plotjuggler://fms/flight/";
+  for (auto it = args.begin(); it != args.end();)
+  {
+    if (it->compare(0, link_prefix.size(), link_prefix) != 0)
+    {
+      ++it;
+      continue;
+    }
+    size_t pos = link_prefix.size();
+    while (pos < it->size() && (*it)[pos] >= '0' && (*it)[pos] <= '9')
+    {
+      ++pos;
+    }
+    const std::string id = it->substr(link_prefix.size(), pos - link_prefix.size());
+    const bool valid_tail = pos == it->size() || (*it)[pos] == '/' || (*it)[pos] == '?' ||
+                            (*it)[pos] == '#';
+    if (id.empty() || !valid_tail)
+    {
+      std::cerr << "plotjuggler: not a flight link: " << *it << std::endl;
+      return 1;
+    }
+    qputenv("FMS_FLIGHT_ID", QByteArray::fromStdString(id));
+    it = args.erase(it);
+  }
+
   args = MergeArguments(args);
 
   int new_argc = args.size();
@@ -274,6 +305,20 @@ int main(int argc, char* argv[])
   parser.addOption(window_title);
 
   parser.process(*qApp);
+
+  // Files given without -d, as a desktop entry's %U or `plotjuggler flight.ulg`
+  // does, are data files. A launcher hands them over as file:// URLs.
+  const QStringList positional_files = parser.positionalArguments();
+  if (!positional_files.isEmpty())
+  {
+    QStringList with_datafiles = qApp->arguments();
+    for (const QString& positional : positional_files)
+    {
+      const QUrl url = QUrl::fromUserInput(positional);
+      with_datafiles << "-d" << (url.isLocalFile() ? url.toLocalFile() : positional);
+    }
+    parser.process(with_datafiles);
+  }
 
   if (parser.isSet(publish_option) && !parser.isSet(layout_option))
   {
