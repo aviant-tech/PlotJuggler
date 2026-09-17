@@ -747,6 +747,7 @@ void FmsBrowserWidget::enqueueSpecs(const QStringList& specs, bool quiet)
   _parse_ms = 0;
   _import_ms = 0;
   _download_timer.start();
+  _progress_report_timer.start();
   qDebug() << "[ToolboxFMS] download start: flight" << _current_flight_id << "series"
            << specs.size() << "concurrency" << MAX_CONCURRENT_REQUESTS;
   updateLoadButton();
@@ -879,6 +880,7 @@ void FmsBrowserWidget::requestNextBatch()
     batch_weight += progressWeight(_pending_specs[batch_size]);
     batch_size++;
   }
+  const QStringList batch = _pending_specs.mid(0, batch_size);
   _pending_specs.erase(_pending_specs.begin(), _pending_specs.begin() + batch_size);
 
   setStatus(QString("Downloading %1 series (%2 remaining)...")
@@ -892,9 +894,28 @@ void FmsBrowserWidget::requestNextBatch()
   QNetworkReply* reply = apiGet(QString("/api/analysis/flights/%1/ulog-series/?%2")
                                     .arg(_current_flight_id)
                                     .arg(query.toString(QUrl::FullyEncoded)));
+  _in_flight_batches[reply] = { batch, 0.0 };
+  connect(reply, &QNetworkReply::downloadProgress, this,
+          [this, reply](qint64 received, qint64 total) {
+            // Qt reports the wire bytes here, so the total is known whenever
+            // the server sent Content-Length, which it does.
+            if (total > 0)
+            {
+              _in_flight_batches[reply].fraction = std::min(1.0, double(received) / double(total));
+            }
+            // Many small steps per second across eight connections: redraw
+            // the rows at most ten times a second.
+            if (_progress_report_timer.elapsed() > 100)
+            {
+              _progress_report_timer.restart();
+              updateProgress();
+              reportTopicProgress();
+            }
+          });
   connect(reply, &QNetworkReply::finished, this,
           [this, reply, request_started_ms, batch_weight]() {
     reply->deleteLater();
+    _in_flight_batches.erase(reply);
     const qint64 waited_ms = _download_timer.elapsed() - request_started_ms;
     _in_flight--;
     _progress_done += batch_weight;
@@ -1169,11 +1190,35 @@ void FmsBrowserWidget::cancelDownload()
   pumpRequests();
 }
 
+std::map<QString, double> FmsBrowserWidget::inFlightFractions() const
+{
+  std::map<QString, double> fractions;
+  for (const auto& [reply, batch] : _in_flight_batches)
+  {
+    for (const QString& spec : batch.specs)
+    {
+      fractions[spec] = batch.fraction;
+    }
+  }
+  return fractions;
+}
+
 void FmsBrowserWidget::updateProgress()
 {
-  const int steps = _progress_total > 0 ?
-                        static_cast<int>(_progress_done * PROGRESS_STEPS / _progress_total) :
-                        PROGRESS_STEPS;
+  // Credit the batches on the wire with the share that has arrived.
+  double in_flight_done = 0.0;
+  for (const auto& [reply, batch] : _in_flight_batches)
+  {
+    for (const QString& spec : batch.specs)
+    {
+      in_flight_done += batch.fraction * double(progressWeight(spec));
+    }
+  }
+  const int steps =
+      _progress_total > 0 ?
+          static_cast<int>((double(_progress_done) + in_flight_done) * PROGRESS_STEPS /
+                           double(_progress_total)) :
+          PROGRESS_STEPS;
   _progress_bar->setValue(std::min(steps, PROGRESS_STEPS));
   if (_progress_dialog && !_progress_dialog->wasCanceled())
   {
@@ -1193,23 +1238,31 @@ void FmsBrowserWidget::reportTopicProgress()
   // the row in the curve list counts up as its batches land. Only changes
   // are sent, and a topic with nothing requested is reported once as done.
   const QString prefix = seriesPrefix();
+  const std::map<QString, double> fractions = inFlightFractions();
   for (const auto& [topic, specs] : _specs_by_topic)
   {
-    qint64 loaded = 0;
-    qint64 requested = 0;
+    double loaded = 0;
+    double requested = 0;
     for (const QString& spec : specs)
     {
+      const double weight = double(progressWeight(spec));
       if (_requested_specs.count(spec))
       {
-        requested += progressWeight(spec);
+        // partly here already if its batch is on the wire
+        const auto f = fractions.find(spec);
+        const double fraction = f == fractions.end() ? 0.0 : f->second;
+        loaded += fraction * weight;
+        requested += (1.0 - fraction) * weight;
       }
       else if (_loaded_specs.count(spec))
       {
-        loaded += progressWeight(spec);
+        loaded += weight;
       }
     }
-    const int percent =
-        requested == 0 ? 100 : static_cast<int>(loaded * 100 / (loaded + requested));
+    // 100 is reserved for "nothing requested": a topic whose last bytes are
+    // arriving shows 99 until its batch is imported.
+    const int percent = requested == 0 ? 100 :
+                        std::min(99, static_cast<int>(loaded * 100.0 / (loaded + requested)));
     const auto reported = _reported_percent.find(topic);
     const int previous = reported == _reported_percent.end() ? 100 : reported->second;
     if (percent != previous)

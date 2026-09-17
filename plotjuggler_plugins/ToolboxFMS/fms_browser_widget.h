@@ -89,6 +89,7 @@ private:
   void updateProgress();
   void finishProgress();
   void reportTopicProgress();
+  std::map<QString, double> inFlightFractions() const;
 
   QString topicLabel(const QString& dataset, int multi_id) const;
   static QString fieldLabel(const QString& field);
@@ -137,6 +138,15 @@ private:
   std::map<QString, QStringList> _specs_by_topic;
   // last percent sent for a topic, so the curve list only hears changes
   std::map<QString, int> _reported_percent;
+  // batches on the wire: their specs and how much of each has arrived, so
+  // progress moves during a transfer and not only when one completes
+  struct InFlight
+  {
+    QStringList specs;
+    double fraction = 0.0;
+  };
+  std::map<QNetworkReply*, InFlight> _in_flight_batches;
+  QElapsedTimer _progress_report_timer;
   // parameters of the currently selected flight, imported as one-point series
   std::map<QString, double> _parameters;
   double _log_start_time_s = 0.0;
