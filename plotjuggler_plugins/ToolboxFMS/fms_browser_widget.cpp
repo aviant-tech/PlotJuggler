@@ -18,7 +18,6 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QProgressBar>
-#include <QProgressDialog>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSettings>
@@ -622,7 +621,7 @@ void FmsBrowserWidget::fetchSeries(const QString& series_name)
   {
     return;  // loaded, or already on its way
   }
-  enqueueSpecs(specs, true);
+  enqueueSpecs(specs);
 }
 
 void FmsBrowserWidget::applyFieldFilter(const QString& text)
@@ -688,10 +687,10 @@ void FmsBrowserWidget::startDownload(const QStringList& specs, int already_loade
     setStatus(already_loaded ? "All selected series are already loaded." : "Nothing selected.");
     return;
   }
-  enqueueSpecs(specs, false);
+  enqueueSpecs(specs);
 }
 
-void FmsBrowserWidget::enqueueSpecs(const QStringList& specs, bool quiet)
+void FmsBrowserWidget::enqueueSpecs(const QStringList& specs)
 {
   if (_loading)
   {
@@ -719,26 +718,6 @@ void FmsBrowserWidget::enqueueSpecs(const QStringList& specs, bool quiet)
   }
   _progress_bar->setValue(0);
   _progress_bar->show();
-  if (!isVisible())
-  {
-    // The panel is hidden and the user is looking at the plot view, so give
-    // the download a face of its own there. Non-modal, so the plots that
-    // have already landed stay usable while the rest arrives. A fetch that a
-    // plot or the curve list asked for is usually over in well under a
-    // second, so those only get the dialog once they have run long enough
-    // to be worth one; the explicit downloads get it at once.
-    delete _progress_dialog;
-    _progress_dialog =
-        new QProgressDialog(QString("Downloading flight %1...").arg(_current_flight_id), "Cancel",
-                            0, PROGRESS_STEPS, window());
-    _progress_dialog->setWindowTitle("FMS Flight Browser");
-    _progress_dialog->setWindowModality(Qt::NonModal);
-    _progress_dialog->setMinimumDuration(quiet ? 700 : 0);
-    _progress_dialog->setAutoClose(false);
-    _progress_dialog->setAutoReset(false);
-    _progress_dialog->setValue(0);
-    connect(_progress_dialog, &QProgressDialog::canceled, this, &FmsBrowserWidget::cancelDownload);
-  }
   _downloaded_bytes = 0;
   _wire_bytes = 0;
   _downloaded_series = 0;
@@ -1183,10 +1162,6 @@ void FmsBrowserWidget::cancelDownload()
   setStatus(QString("Cancelled, %1 series not downloaded. Waiting for %2 batch(es) in flight...")
                 .arg(dropped)
                 .arg(_in_flight));
-  if (_progress_dialog)
-  {
-    _progress_dialog->setLabelText("Cancelling, waiting for batches in flight...");
-  }
   pumpRequests();
 }
 
@@ -1220,16 +1195,6 @@ void FmsBrowserWidget::updateProgress()
                            double(_progress_total)) :
           PROGRESS_STEPS;
   _progress_bar->setValue(std::min(steps, PROGRESS_STEPS));
-  if (_progress_dialog && !_progress_dialog->wasCanceled())
-  {
-    _progress_dialog->setValue(std::min(steps, PROGRESS_STEPS));
-    _progress_dialog->setLabelText(QString("Downloading flight %1: %2 series, %3 MiB so far "
-                                           "(%4 remaining)")
-                                       .arg(_current_flight_id)
-                                       .arg(_downloaded_series)
-                                       .arg(_downloaded_bytes / 1024 / 1024)
-                                       .arg(_pending_specs.size() + _in_flight));
-  }
 }
 
 void FmsBrowserWidget::reportTopicProgress()
@@ -1276,11 +1241,6 @@ void FmsBrowserWidget::reportTopicProgress()
 void FmsBrowserWidget::finishProgress()
 {
   _progress_bar->hide();
-  if (_progress_dialog)
-  {
-    _progress_dialog->deleteLater();
-    _progress_dialog = nullptr;
-  }
 }
 
 void FmsBrowserWidget::setStatus(const QString& text, bool error)

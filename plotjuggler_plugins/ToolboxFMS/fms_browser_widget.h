@@ -16,7 +16,6 @@ class QListWidget;
 class QNetworkAccessManager;
 class QNetworkReply;
 class QProgressBar;
-class QProgressDialog;
 class QPushButton;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -75,7 +74,7 @@ private:
   qint64 estimatedBytes(const QString& spec) const;
   qint64 progressWeight(const QString& spec) const;
   void startDownload(const QStringList& specs, int already_loaded);
-  void enqueueSpecs(const QStringList& specs, bool quiet);
+  void enqueueSpecs(const QStringList& specs);
   void registerAllSeries();
   QString seriesName(const QString& dataset, int multi_id, const QString& field) const;
   QStringList allSpecs() const;
@@ -116,9 +115,6 @@ private:
   QPushButton* _cancel_button;
   QLabel* _status_label;
   QProgressBar* _progress_bar;
-  // shown over the plot view while the panel is hidden (deep link), so the
-  // download is visible and can be cancelled without opening the browser
-  QProgressDialog* _progress_dialog = nullptr;
 
   QNetworkAccessManager* _network;
 
