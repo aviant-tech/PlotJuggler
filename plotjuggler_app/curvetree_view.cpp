@@ -5,6 +5,8 @@
  */
 
 #include "curvetree_view.h"
+#include <QProgressBar>
+#include <algorithm>
 #include "curvelist_panel.h"
 #include <QTimer>
 #include <QFontDatabase>
@@ -428,10 +430,26 @@ void CurveTreeView::setGroupProgress(const QString& group_name, int percent)
   // Group rows have no value of their own, so the column is free for this.
   // refreshValues() only writes curve rows and leaves it alone.
   treeVisitor([&](QTreeWidgetItem* item) {
-    if (item->data(0, IsGroupName).toBool() && item->data(0, Name).toString() == group_name)
+    if (!item->data(0, IsGroupName).toBool() || item->data(0, Name).toString() != group_name)
     {
-      item->setText(1, percent < 100 ? QString("%1%").arg(percent) : QString());
+      return;
     }
+    if (percent >= 100)
+    {
+      removeItemWidget(item, 1);
+      return;
+    }
+    auto* bar = qobject_cast<QProgressBar*>(itemWidget(item, 1));
+    if (!bar)
+    {
+      bar = new QProgressBar(this);
+      bar->setRange(0, 100);
+      bar->setTextVisible(false);
+      bar->setMaximumHeight(std::max(6, fontMetrics().height() / 2));
+      bar->setToolTip("Downloading from FMS");
+      setItemWidget(item, 1, bar);
+    }
+    bar->setValue(percent);
   });
 }
 
