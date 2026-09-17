@@ -45,6 +45,9 @@ public:
 
   void treeVisitor(std::function<void(QTreeWidgetItem*)> visitor);
 
+  /// Show a fetch's progress in the value column of a group's row; 100 clears it.
+  void setGroupProgress(const QString& group_name, int percent);
+
   virtual void keyPressEvent(QKeyEvent*) override;
 
 private:

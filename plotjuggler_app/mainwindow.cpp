@@ -184,6 +184,20 @@ MainWindow::MainWindow(const QCommandLineParser& commandline_parser, QWidget* pa
   connect(_curvelist_widget, &CurveListPanel::refreshMathPlot, this,
           &MainWindow::onRefreshCustomPlot);
 
+  // Expanding a topic in the curve list asks lazy sources for its data, the
+  // same way dropping one of its curves on a plot does.
+  connect(_curvelist_widget, &CurveListPanel::groupExpanded, this,
+          [this](const std::vector<std::string>& names) {
+            for (const auto& name : names)
+            {
+              auto it = _mapped_plot_data.numeric.find(name);
+              if (it != _mapped_plot_data.numeric.end() && it->second.size() == 0)
+              {
+                emit seriesRequested(name);
+              }
+            }
+          });
+
   connect(ui->timeSlider, &RealSlider::realValueChanged, this,
           &MainWindow::onTimeSlider_valueChanged);
 
@@ -691,6 +705,18 @@ void MainWindow::initializePlugins()
 
     auto action = ui->menuTools->addAction(toolbox->name());
 
+    if (const char* label = toolbox->toolbarButtonLabel())
+    {
+      auto* button = new QPushButton(label, this);
+      button->setFlat(true);
+      button->setFocusPolicy(Qt::NoFocus);
+      button->setToolTip(toolbox->name());
+      button->setMinimumHeight(26);
+      // next to the "Load data" button, before the spacer
+      ui->horizontalLayout_3->insertWidget(2, button);
+      connect(button, &QPushButton::clicked, action, &QAction::trigger);
+    }
+
     int new_index = ui->widgetStack->count();
     auto provided = toolbox->providedWidget();
     auto widget = provided.first;
@@ -698,6 +724,13 @@ void MainWindow::initializePlugins()
     const auto* toolbox_ptr = toolbox.get();
 
     connect(action, &QAction::triggered, toolbox_ptr, &ToolboxPlugin::onShowWidget);
+
+    connect(this, &MainWindow::seriesRequested, toolbox_ptr, &ToolboxPlugin::onSeriesRequested);
+
+    connect(toolbox_ptr, &ToolboxPlugin::groupProgress, this,
+            [this](std::string group_name, int percent) {
+              _curvelist_widget->setGroupProgress(group_name, percent);
+            });
 
     connect(action, &QAction::triggered, this,
             [this, new_index]() { ui->widgetStack->setCurrentIndex(new_index); });
@@ -709,6 +742,9 @@ void MainWindow::initializePlugins()
             [this](PlotDataMapRef& new_data, bool remove_old) {
               importPlotDataMap(new_data, remove_old);
               updateDataAndReplot(true);
+              // Series that were empty now have values at the tracker time;
+              // the value column only refreshes itself on scroll and expand.
+              onUpdateLeftTableValues();
             });
 
     connect(toolbox_ptr, &ToolboxPlugin::plotCreated, this, [=](std::string name, bool is_custom) {
@@ -821,9 +857,21 @@ void MainWindow::onPlotAdded(PlotWidget* plot)
 
   connect(this, &MainWindow::dataSourceRemoved, plot, &PlotWidget::onDataSourceRemoved);
 
-  connect(plot, &PlotWidget::curveListChanged, this, [this]() {
+  connect(plot, &PlotWidget::curveListChanged, this, [this, plot]() {
     updateTimeOffset();
     updateTimeSlider();
+    // A curve placed on a plot while its series is still empty is a request
+    // for that series' data, for sources that register series before
+    // fetching them (the FMS toolbox). Re-emitting for a series already on
+    // its way is harmless: the source is expected to deduplicate.
+    for (const auto& curve : plot->curveList())
+    {
+      auto it = _mapped_plot_data.numeric.find(curve.src_name);
+      if (it != _mapped_plot_data.numeric.end() && it->second.size() == 0)
+      {
+        emit seriesRequested(curve.src_name);
+      }
+    }
   });
 
   connect(&_time_offset, &MonitoredValue::valueChanged, plot, &PlotWidget::on_changeTimeOffset);

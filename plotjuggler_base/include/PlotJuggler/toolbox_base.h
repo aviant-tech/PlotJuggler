@@ -36,6 +36,13 @@ public:
 
   virtual std::pair<QWidget*, WidgetType> providedWidget() const = 0;
 
+  /// Label for a button in the main window's Data row that opens this
+  /// toolbox with one click; nullptr keeps it in the Tools menu only.
+  virtual const char* toolbarButtonLabel() const
+  {
+    return nullptr;
+  }
+
   void setParserFactories(ParserFactories* parsers)
   {
     _parser_factories = parsers;
@@ -50,6 +57,12 @@ public slots:
 
   virtual bool onShowWidget() = 0;
 
+  /// A curve whose series is registered but still empty was placed on a
+  /// plot. A toolbox that registers series lazily fetches the data now.
+  virtual void onSeriesRequested(const std::string& /*series_name*/)
+  {
+  }
+
 signals:
 
   void plotCreated(std::string plot_name, bool is_custom = true);
@@ -57,6 +70,10 @@ signals:
   void importData(PlotDataMapRef& new_data, bool remove_old);
 
   void closed();
+
+  /// Progress of a fetch for the series of one group, 0..100. The host shows
+  /// it on the group's row in the curve list; 100 clears it.
+  void groupProgress(std::string group_name, int percent);
 
 private:
   ParserFactories* _parser_factories = nullptr;
