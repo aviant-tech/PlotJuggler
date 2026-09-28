@@ -1415,7 +1415,10 @@ std::unordered_set<std::string> MainWindow::loadDataFromFile(const FileLoadInfo&
     {
       if (extension == QString(ext).toLower())
       {
-        compatible_loaders.push_back(it);
+        if (data_loader->canReadFile(info.filename))
+        {
+          compatible_loaders.push_back(it);
+        }
         break;
       }
     }
@@ -1428,7 +1431,7 @@ std::unordered_set<std::string> MainWindow::loadDataFromFile(const FileLoadInfo&
   {
     dataloader = compatible_loaders.front()->second;
   }
-  else
+  else if (compatible_loaders.size() > 1)
   {
     static QString last_plugin_name_used;
 
