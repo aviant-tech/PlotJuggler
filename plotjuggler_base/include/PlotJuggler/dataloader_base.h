@@ -43,6 +43,13 @@ public:
 
   virtual bool readDataFromFile(FileLoadInfo* fileload_info, PlotDataMapRef& destination) = 0;
 
+  /// Called for a file whose extension matches. Return false when the content is
+  /// not in this plugin's format, so the application does not offer this loader.
+  virtual bool canReadFile(const QString& /*filename*/) const
+  {
+    return true;
+  }
+
   void setParserFactories(ParserFactories* parsers)
   {
     _parser_factories = parsers;

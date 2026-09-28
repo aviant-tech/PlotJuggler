@@ -1,3 +1,4 @@
+add_subdirectory(DataLoadBinLog)
 add_subdirectory(DataLoadCSV)
 add_subdirectory(DataLoadMCAP)
 add_subdirectory(DataLoadParquet)
