@@ -1,7 +1,9 @@
 #pragma once
 
 #include <QElapsedTimer>
+#include <QJsonObject>
 #include <QWidget>
+#include <functional>
 #include <map>
 #include <set>
 
@@ -73,7 +75,17 @@ private:
   void enqueueSpecs(const QStringList& specs);
   void registerAllSeries();
   QString seriesName(const QString& dataset, int multi_id, const QString& field) const;
+  using SeriesCallback = std::function<void(
+      const QString& dataset, int multi_id, const QString& field, const QString& spec,
+      const double* timestamps, const double* values, int count)>;
+  /// Call on_series for each series of a ulog-series response (PJS1 or PJS2).
+  bool parseSeriesPayload(const QByteArray& payload, QJsonObject* header,
+                          const SeriesCallback& on_series);
   void importSeriesPayload(const QByteArray& payload);
+  /// The flight's winch log, when FMS has one, as the "aviant_winch" series
+  /// FMS puts in a combined ULog, in PX4 boot time.
+  void fetchWinchLog();
+  void importWinchLog(int flight_id, const QByteArray& zip, const QByteArray& utc_payload);
   void addSeries(PJ::PlotDataMapRef& map, const QString& dataset, int multi_id,
                  const QString& field, const double* timestamps, const double* values, int count);
   void importParameters(PJ::PlotDataMapRef& map);

@@ -1,4 +1,7 @@
 #include "fms_browser_widget.h"
+#ifdef FMS_WINCH_LOG
+#include "winch_log.h"
+#endif
 
 #include <QCheckBox>
 #include <QDebug>
@@ -536,6 +539,143 @@ void FmsBrowserWidget::populateFieldTree(const QByteArray& info_json)
   // A deep link ends here: the flight is open and every series is a drag
   // away. "Download all" is for pulling everything up front.
   _link_in_progress = false;
+  fetchWinchLog();
+}
+
+void FmsBrowserWidget::fetchWinchLog()
+{
+#ifdef FMS_WINCH_LOG
+  // FMS aligns its CSV logs to the ULog with the UTC time of the first GNSS
+  // fix; ask for the same series, in its order of preference
+  QUrlQuery utc_query;
+  utc_query.addQueryItem("layout", "pjs2");
+  for (const char* spec : { "vehicle_gps_position_0.time_utc_usec", "sensor_gps_0.time_utc_usec",
+                            "sensor_gps_1.time_utc_usec" })
+  {
+    if (_all_specs.contains(spec))
+    {
+      utc_query.addQueryItem("field", spec);
+    }
+  }
+  if (!utc_query.hasQueryItem("field"))
+  {
+    return;  // no way to place the winch log on the ULog's time axis
+  }
+
+  const int flight_id = _current_flight_id;
+  QNetworkReply* reply = apiGet(QString("/api/flight/%1/").arg(flight_id));
+  connect(reply, &QNetworkReply::finished, this, [this, reply, flight_id, utc_query]() {
+    reply->deleteLater();
+    const QJsonObject flight = QJsonDocument::fromJson(reply->readAll()).object();
+    if (flight_id != _current_flight_id || reply->error() != QNetworkReply::NoError ||
+        flight["winch_log"].isNull() || flight["winch_log"].isUndefined())
+    {
+      return;
+    }
+    QNetworkReply* zip_reply =
+        apiGet(QString("/api/flight/download_logs/?id=%1&log_types=winch_log").arg(flight_id));
+    connect(zip_reply, &QNetworkReply::finished, this, [this, zip_reply, flight_id, utc_query]() {
+      zip_reply->deleteLater();
+      if (flight_id != _current_flight_id)
+      {
+        return;
+      }
+      if (zip_reply->error() != QNetworkReply::NoError)
+      {
+        setStatus("Winch log download error: " + zip_reply->errorString(), true);
+        return;
+      }
+      const QByteArray zip = zip_reply->readAll();
+      QNetworkReply* utc_reply = apiGet(QString("/api/analysis/flights/%1/ulog-series/?%2")
+                                            .arg(flight_id)
+                                            .arg(utc_query.toString(QUrl::FullyEncoded)));
+      connect(utc_reply, &QNetworkReply::finished, this, [this, utc_reply, flight_id, zip]() {
+        utc_reply->deleteLater();
+        if (flight_id != _current_flight_id)
+        {
+          return;
+        }
+        if (utc_reply->error() != QNetworkReply::NoError)
+        {
+          setStatus("Winch log: cannot read the GNSS time: " + utc_reply->errorString(), true);
+          return;
+        }
+        importWinchLog(flight_id, zip, utc_reply->readAll());
+      });
+    });
+  });
+#endif
+}
+
+void FmsBrowserWidget::importWinchLog(int flight_id, const QByteArray& zip,
+                                      const QByteArray& utc_payload)
+{
+#ifdef FMS_WINCH_LOG
+  // UTC at boot from the first sample with a fix, of the first series that has one
+  std::map<QString, double> utc_at_boot;
+  QJsonObject header;
+  parseSeriesPayload(utc_payload, &header,
+                     [&](const QString&, int, const QString&, const QString& spec,
+                         const double* timestamps, const double* values, int count) {
+                       for (int i = 0; i < count; i++)
+                       {
+                         if (values[i] > 0 && values[i] * 1e-6 > timestamps[i])
+                         {
+                           utc_at_boot[spec] = values[i] * 1e-6 - timestamps[i];
+                           break;
+                         }
+                       }
+                     });
+  double utc_at_boot_s = 0;
+  for (const char* spec : { "vehicle_gps_position_0.time_utc_usec", "sensor_gps_0.time_utc_usec",
+                            "sensor_gps_1.time_utc_usec" })
+  {
+    if (utc_at_boot.count(spec))
+    {
+      utc_at_boot_s = utc_at_boot[spec];
+      break;
+    }
+  }
+  if (utc_at_boot_s <= 0)
+  {
+    setStatus("Winch log: the flight log has no GNSS time to align it with", true);
+    return;
+  }
+
+  QString error;
+  const QByteArray csv = fms::unzipFirstFile(zip, &error);
+  if (csv.isEmpty())
+  {
+    setStatus("Winch log: " + error, true);
+    return;
+  }
+  PJ::PlotDataMapRef map;
+  const QString topic = seriesPrefix() + topicLabel("aviant_winch", 0);
+  auto group = map.getOrCreateGroup(topic.toStdString());
+  size_t samples = 0;
+  for (const auto& [field, points] : fms::parseWinchLog(csv, utc_at_boot_s))
+  {
+    auto plot_it = map.addNumeric((topic + "/" + field).toStdString(), group);
+    for (const auto& [t, value] : points)
+    {
+      plot_it->second.pushBack(PJ::PlotData::Point(t, value));
+    }
+    samples += points.size();
+  }
+  if (samples == 0)
+  {
+    setStatus("Winch log: no samples during the flight log", true);
+    return;
+  }
+  emitImport(map);
+  setStatus(QString("Flight %1: added the winch log (aviant_winch, %2 series)")
+                .arg(flight_id)
+                .arg(map.numeric.size()));
+#else
+  Q_UNUSED(flight_id);
+  Q_UNUSED(zip);
+  Q_UNUSED(utc_payload);
+#endif
 }
 
 void FmsBrowserWidget::registerAllSeries()
@@ -852,29 +992,26 @@ void FmsBrowserWidget::addSeries(PJ::PlotDataMapRef& map, const QString& dataset
   _downloaded_samples += count;
 }
 
-void FmsBrowserWidget::importSeriesPayload(const QByteArray& payload)
+bool FmsBrowserWidget::parseSeriesPayload(const QByteArray& payload, QJsonObject* header_out,
+                                          const SeriesCallback& on_series)
 {
   const bool pjs2 = payload.startsWith("PJS2");
   if (payload.size() < 8 || !(pjs2 || payload.startsWith("PJS1")))
   {
     setStatus("Unexpected series response format", true);
-    return;
+    return false;
   }
   quint32 header_len = 0;
   std::memcpy(&header_len, payload.constData() + 4, 4);
   if (payload.size() < 8 + qint64(header_len))
   {
     setStatus("Truncated series response", true);
-    return;
+    return false;
   }
   const QJsonObject header =
       QJsonDocument::fromJson(payload.mid(8, int(header_len))).object();
-
-  QElapsedTimer parse_timer;
-  parse_timer.start();
-  PJ::PlotDataMapRef map;
+  *header_out = header;
   qint64 offset = 8 + header_len;
-  int imported = 0;
   auto remaining = [&](qint64 needed) {
     if (payload.size() < offset + needed)
     {
@@ -897,7 +1034,7 @@ void FmsBrowserWidget::importSeriesPayload(const QByteArray& payload)
       const int count = dataset["count"].toInt();
       if (!remaining(qint64(count) * 8))
       {
-        return;
+        return false;
       }
       deltas.resize(size_t(count));
       std::memcpy(deltas.data(), payload.constData() + offset, size_t(count) * 8);
@@ -916,19 +1053,17 @@ void FmsBrowserWidget::importSeriesPayload(const QByteArray& payload)
         const qint64 bytes = qint64(count) * dtypeSize(dtype);
         if (!remaining(bytes))
         {
-          return;
+          return false;
         }
         if (!widenValues(payload.constData() + offset, dtype, count, values))
         {
           setStatus("Unsupported series dtype " + dtype, true);
-          return;
+          return false;
         }
         offset += bytes;
-        addSeries(map, dataset["dataset"].toString(), dataset["multi_id"].toInt(),
-                  field["field"].toString(), timestamps.data(), values.data(), count);
-        _loaded_specs.insert(field["spec"].toString());
-        _requested_specs.erase(field["spec"].toString());
-        imported++;
+        on_series(dataset["dataset"].toString(), dataset["multi_id"].toInt(),
+                  field["field"].toString(), field["spec"].toString(), timestamps.data(),
+                  values.data(), count);
       }
     }
   }
@@ -942,17 +1077,39 @@ void FmsBrowserWidget::importSeriesPayload(const QByteArray& payload)
       const int count = series["count"].toInt();
       if (!remaining(qint64(count) * 16))
       {
-        return;
+        return false;
       }
       data.resize(size_t(count) * 2);
       std::memcpy(data.data(), payload.constData() + offset, size_t(count) * 16);
       offset += qint64(count) * 16;
-      addSeries(map, series["dataset"].toString(), series["multi_id"].toInt(),
-                series["field"].toString(), data.data(), data.data() + count, count);
-      _loaded_specs.insert(series["spec"].toString());
-      _requested_specs.erase(series["spec"].toString());
-      imported++;
+      on_series(series["dataset"].toString(), series["multi_id"].toInt(),
+                series["field"].toString(), series["spec"].toString(), data.data(),
+                data.data() + count, count);
     }
+  }
+
+  return true;
+}
+
+void FmsBrowserWidget::importSeriesPayload(const QByteArray& payload)
+{
+  QElapsedTimer parse_timer;
+  parse_timer.start();
+  PJ::PlotDataMapRef map;
+  int imported = 0;
+  QJsonObject header;
+  const bool parsed = parseSeriesPayload(
+      payload, &header,
+      [&](const QString& dataset, int multi_id, const QString& field, const QString& spec,
+          const double* timestamps, const double* values, int count) {
+        addSeries(map, dataset, multi_id, field, timestamps, values, count);
+        _loaded_specs.insert(spec);
+        _requested_specs.erase(spec);
+        imported++;
+      });
+  if (!parsed)
+  {
+    return;
   }
 
   if (_parameters_check->isChecked() && !_parameters_imported)
