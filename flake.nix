@@ -78,6 +78,7 @@
             pkgs.fmt
             pkgs.lz4
             pkgs.zstd
+            pkgs.zlib
             pkgs.mosquitto
             pkgs.protobuf
             pkgs.xorg.libX11

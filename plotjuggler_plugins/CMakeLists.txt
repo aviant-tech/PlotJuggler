@@ -14,6 +14,7 @@ add_subdirectory(DataStreamPlotJugglerBridge)
 add_subdirectory(DataStreamSerialPort)
 
 add_subdirectory(StatePublisherCSV)
+add_subdirectory(Publisher3DReplay)
 add_subdirectory(VideoViewer)
 
 add_subdirectory(ToolboxQuaternion)

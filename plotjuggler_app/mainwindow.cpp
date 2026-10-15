@@ -635,6 +635,8 @@ void MainWindow::initializePlugins()
     connect(pub_ptr, &StatePublisher::closed, start_checkbox,
             [start_checkbox]() { start_checkbox->setChecked(false); });
 
+    connect(pub_ptr, &StatePublisher::seriesRequested, this, &MainWindow::seriesRequested);
+
     if (publisher->availableActions().empty())
     {
       QFrame* empty = new QFrame(ui->framePublishers);

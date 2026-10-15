@@ -48,6 +48,10 @@ signals:
   /// signal to be emitted when the plugin disable itself.
   void closed();
 
+  /// signal to be emitted to ask for the data of a series that is in the data
+  /// map but still empty, as sources that load series on demand (FMS) leave them.
+  void seriesRequested(const std::string& series_name);
+
 protected:
   const PlotDataMapRef* _datamap;
 };

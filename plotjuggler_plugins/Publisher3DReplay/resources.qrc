@@ -1,0 +1,8 @@
+<RCC>
+  <qresource prefix="/replay3d">
+    <file alias="index.html">web/index.html</file>
+    <file alias="replay.js">web/replay.js</file>
+    <file alias="notus4.glb">web/notus4.glb</file>
+    <file alias="package.glb">web/package.glb</file>
+  </qresource>
+</RCC>
